@@ -1,5 +1,6 @@
 //! `self-update` — update lrfl to the latest GitHub release, via the family
-//! updater (`pk-cli-selfupdate`).
+//! updater (`pk-cli-selfupdate`): `--check`, `-y/--yes`, `--json`, and the
+//! `self-update/v1` DTO all come from the shared crate.
 
 use pk_cli_selfupdate::SelfUpdateArgs;
 
@@ -7,12 +8,7 @@ use crate::commands::Ctx;
 use crate::error::AppError;
 use crate::update;
 
-pub fn run(ctx: &Ctx, check: bool) -> Result<(), AppError> {
+pub fn run(ctx: &Ctx, args: &SelfUpdateArgs) -> Result<(), AppError> {
     ctx.log("checking github releases for piekstra/loxahatchee-river-fl-cli…");
-    let args = SelfUpdateArgs {
-        check,
-        yes: true,
-        json: false,
-    };
-    update::updater().run(&args, ctx.json, ctx.quiet)
+    update::updater().run(args, ctx.json, ctx.quiet)
 }

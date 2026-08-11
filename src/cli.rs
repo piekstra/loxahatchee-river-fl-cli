@@ -176,11 +176,7 @@ pub enum Command {
 
     /// Update lrfl to the latest release from GitHub.
     #[command(name = "self-update")]
-    SelfUpdate {
-        /// Only check whether an update is available; don't install it.
-        #[arg(long)]
-        check: bool,
-    },
+    SelfUpdate(pk_cli_selfupdate::SelfUpdateArgs),
 
     /// Machine-readable capability discovery (cli-info/v1).
     Info,

@@ -47,7 +47,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::Whoami => commands::auth::whoami(&ctx),
         Command::Info => commands::auth::info(&ctx),
         Command::Accounts { balances } => commands::accounts::run(&ctx, *balances),
-        Command::SelfUpdate { check } => commands::self_update::run(&ctx, *check),
+        Command::SelfUpdate(args) => commands::self_update::run(&ctx, args),
         Command::Completions { .. } => unreachable!("handled above"),
     }
 }

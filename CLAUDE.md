@@ -63,7 +63,9 @@ cargo fmt --all
 - Use `--json`. stdout is pure JSON; stderr is diagnostics.
 - Respect exit codes (see README): `2` usage, `3` auth, `4` not found, `5` network,
   `6` rate-limited, `7` async timeout.
-- The field you usually want is `.balance_due` (or `.payments[].amount`).
+- The field you usually want is `.balance.amount` from `summary`/`balance`
+  (utility-summary/v1), or `.items[].amount.amount` from `history`
+  (payment-list/v1). Amounts are string-decimal dollars, dates ISO.
 
 ## Gotchas & rules
 

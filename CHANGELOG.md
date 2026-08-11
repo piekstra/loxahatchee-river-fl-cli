@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.6.0 — 2026-07-20
+
+### Changed
+- **Adopted the `utility/v1` domain profile** (cli-common v0.2.0; `pk-cli-*`
+  deps bumped v0.1.3 → v0.2.0, `pk-cli-utility` added). **Breaking for `--json`
+  consumers; human/text output is unchanged:**
+  - `summary --json` and `balance --json` now emit the canonical
+    **`utility-summary/v1`** card: `balance` as string-decimal `Money`
+    (was `balance_due` f64), the earliest per-service `due_date` (ISO), and
+    `account`. Per-service detail stays in `account --json` / `charges --json`;
+    status and last payment stay in `status --json` / `history --json`.
+  - `history --json` now emits a **`payment-list/v1`** envelope: records under
+    `items`, each a `payment/v1` (`date` ISO, `amount` as `Money`, `method`,
+    `confirmation` = transaction id) — was `{ account, payments: [...] }`.
+  - `info` advertises `"profiles": ["utility/v1"]`.
+- **`self-update` gains `-y/--yes` and `--json`** (the `self-update/v1` DTO)
+  by adopting the shared `pk-cli-selfupdate` argument surface; `--check`
+  behaves as before. This restores the family-standard
+  `self-update --check --json` probe that consumers (e.g. utiman) rely on — the
+  previous hand-rolled `--check`-only surface didn't emit JSON.
+
 ## v0.5.0 — 2026-07-19
 
 ### Added

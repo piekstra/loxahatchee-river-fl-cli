@@ -134,11 +134,11 @@ it to — reCAPTCHA and a processor-hosted form are exactly the wall that stops 
 ## JSON & scripting
 
 ```sh
-# Just the number you owe:
-lrfl balance --json | jq -r '.balance_due'
+# Just the number you owe (utility-summary/v1 — string-decimal dollars):
+lrfl balance --json | jq -r '.balance.amount'
 
-# Total paid in the last 3 years:
-lrfl history --json | jq '[.payments[].amount] | add'
+# Total paid in the last 3 years (payment-list/v1 — records under .items):
+lrfl history --json | jq '[.items[].amount.amount | tonumber] | add'
 
 # Machine-readable service status:
 lrfl status --json | jq '{sewer, overall}'

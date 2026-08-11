@@ -14,6 +14,56 @@ fn money(x: f64) -> String {
     format!("${x:.2}")
 }
 
+// --- utility/v1 profile mapping -------------------------------------------
+
+/// Provider f64 dollars → profile `Money` (string-decimal, two fraction
+/// digits, utility/v1). The WIPP API serves plain dollar floats.
+fn pk_money(v: f64) -> pk_cli_core::Money {
+    pk_cli_core::Money::usd(format!("{v:.2}"))
+}
+
+/// Provider date text → ISO `YYYY-MM-DD` per the profile contract. Handles
+/// the portal's `MM/DD/YYYY` (and `M/D/YYYY`); ISO input and unrecognized
+/// text pass through verbatim rather than being lost.
+fn iso_date(s: &str) -> String {
+    let s = s.trim();
+    let parts: Vec<&str> = s.split('/').collect();
+    if let [m, d, y] = parts.as_slice() {
+        if let (Ok(m), Ok(d), Ok(y)) = (m.parse::<u32>(), d.parse::<u32>(), y.parse::<u32>()) {
+            if y >= 1000 && (1..=12).contains(&m) && (1..=31).contains(&d) {
+                return format!("{y:04}-{m:02}-{d:02}");
+            }
+        }
+    }
+    s.to_string()
+}
+
+/// The `utility-summary/v1` card for an account: total due, the earliest
+/// per-service due date, and the account number. Autopay isn't knowable from
+/// the guest-view endpoints (only the PDF bill carries it), so it stays unset.
+fn utility_summary(a: &Account) -> pk_cli_utility::UtilitySummary {
+    let mut dto = pk_cli_utility::UtilitySummary::new(pk_money(a.balance_due));
+    dto.due_date = a
+        .charges
+        .iter()
+        .map(|c| iso_date(&c.current_due_date))
+        .filter(|d| !d.is_empty())
+        .min();
+    dto.account = Some(a.id.clone()).filter(|id| !id.is_empty());
+    dto
+}
+
+/// One posted payment as the profile's `payment/v1` record.
+fn utility_payment(p: &Payment) -> pk_cli_utility::Payment {
+    pk_cli_utility::Payment {
+        date: iso_date(&p.payment_date),
+        amount: pk_money(p.amount),
+        method: Some(p.method.clone()).filter(|m| !m.is_empty()),
+        status: None,
+        confirmation: Some(p.transaction_id.clone()).filter(|t| !t.is_empty()),
+    }
+}
+
 fn or_dash(s: &str) -> &str {
     if s.trim().is_empty() {
         "—"
@@ -221,27 +271,10 @@ pub fn print_summary(
     json: bool,
 ) {
     if json {
-        let services: Vec<Value> = a
-            .charges
-            .iter()
-            .map(|c| {
-                let code = status.map(|s| s.code_for(&c.service)).unwrap_or("");
-                json!({
-                    "service": c.service,
-                    "amount_due": c.amount_due,
-                    "due_date": c.current_due_date,
-                    "status": status.map(|_| status_word(code)),
-                })
-            })
-            .collect();
-        let mut out = json!({
-            "account": a.id,
-            "balance_due": a.balance_due,
-            "services": services,
-            "last_payment": last_payment.map(|p| serde_json::to_value(p).unwrap()),
-        });
-        out["owner"] = serde_json::to_value(&a.owner).unwrap_or(Value::Null);
-        print_json(&out);
+        // utility/v1: the canonical card DTO (utility-summary/v1). Per-service
+        // detail, status, owner, and the last payment stay available via
+        // `account --json`, `status --json`, and `history --json`.
+        print_json(&serde_json::to_value(utility_summary(a)).expect("serialize summary"));
         return;
     }
 
@@ -275,15 +308,9 @@ pub fn print_summary(
 
 pub fn print_balance(a: &Account, json: bool) {
     if json {
-        print_json(&json!({
-            "account": a.id,
-            "balance_due": a.balance_due,
-            "services": a.charges.iter().map(|c| json!({
-                "service": c.service,
-                "amount_due": c.amount_due,
-                "due_date": c.current_due_date,
-            })).collect::<Vec<_>>(),
-        }));
+        // utility/v1: the same DTO as `summary` — one card, two entry points.
+        // Per-service amounts stay available via `charges --json`.
+        print_json(&serde_json::to_value(utility_summary(a)).expect("serialize balance"));
         return;
     }
     println!("Account {}", a.id);
@@ -371,7 +398,10 @@ pub fn print_status(account_id: &str, s: &AccountStatus, json: bool) {
 
 pub fn print_history(account_id: &str, payments: &[Payment], json: bool) {
     if json {
-        print_json(&json!({ "account": account_id, "payments": payments }));
+        // utility/v1: payment-list/v1 envelope — records under `items`.
+        let items: Vec<pk_cli_utility::Payment> = payments.iter().map(utility_payment).collect();
+        let paged = pk_cli_utility::Paged::new("payment", items);
+        print_json(&serde_json::to_value(paged).expect("serialize history"));
         return;
     }
     if payments.is_empty() {
@@ -543,5 +573,110 @@ pub fn print_accounts(accounts: &[LinkedAccount], json: bool) {
             money(total),
             accounts.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{iso_date, pk_money, utility_payment, utility_summary};
+    use crate::account::Account;
+    use crate::model::Payment;
+    use serde_json::json;
+
+    #[test]
+    fn pk_money_renders_two_fraction_digit_decimal_strings() {
+        assert_eq!(pk_money(0.0).amount, "0.00");
+        assert_eq!(pk_money(95.59).amount, "95.59");
+        assert_eq!(pk_money(1234.5).amount, "1234.50");
+        assert_eq!(pk_money(0.055).amount, "0.06"); // rounds, never truncates
+        assert_eq!(pk_money(-84.21).amount, "-84.21");
+        assert_eq!(pk_money(95.59).currency, "USD");
+    }
+
+    #[test]
+    fn iso_date_converts_slashed_dates_and_passes_through_everything_else() {
+        assert_eq!(iso_date("07/18/2026"), "2026-07-18");
+        assert_eq!(iso_date("7/5/2026"), "2026-07-05");
+        assert_eq!(iso_date(" 07/18/2026 "), "2026-07-18");
+        // Already ISO → unchanged.
+        assert_eq!(iso_date("2026-07-18"), "2026-07-18");
+        // Unrecognized text passes through verbatim rather than being lost.
+        assert_eq!(iso_date("pending"), "pending");
+        assert_eq!(iso_date("13/40/2026"), "13/40/2026");
+        assert_eq!(iso_date(""), "");
+    }
+
+    /// A synthetic account (no real data) with two services due on different
+    /// dates, one of them in the portal's `MM/DD/YYYY` spelling.
+    fn sample_account() -> Account {
+        Account::from_node(
+            "1234567-8",
+            &json!({
+                "chargeTypes": {
+                    "Sewer       ": {
+                        "totPrnBal": 79.09, "totIntDue": 0.0, "futurePrnBal": 0.0,
+                        "currDueDate": "09/01/2026"
+                    },
+                    "Water       ": {
+                        "totPrnBal": 20.0, "totIntDue": 1.50, "futurePrnBal": 5.0,
+                        "currDueDate": "2026-08-15"
+                    }
+                }
+            }),
+        )
+    }
+
+    #[test]
+    fn utility_summary_maps_balance_earliest_due_date_and_account() {
+        let dto = utility_summary(&sample_account());
+        assert_eq!(dto.schema, "utility-summary/v1");
+        assert_eq!(dto.balance.amount, "95.59");
+        assert_eq!(dto.balance.currency, "USD");
+        // Earliest across services, compared after ISO normalization.
+        assert_eq!(dto.due_date.as_deref(), Some("2026-08-15"));
+        assert_eq!(dto.account.as_deref(), Some("1234567-8"));
+        assert_eq!(dto.autopay, None);
+    }
+
+    #[test]
+    fn utility_summary_omits_due_date_when_no_service_states_one() {
+        let acct = Account::from_node(
+            "1234567-8",
+            &json!({ "chargeTypes": { "Sewer ": { "totPrnBal": 1.0, "currDueDate": " " } } }),
+        );
+        assert_eq!(utility_summary(&acct).due_date, None);
+    }
+
+    #[test]
+    fn utility_payment_maps_date_amount_method_and_confirmation() {
+        let p = Payment {
+            transaction_id: "TXN123".into(),
+            amount: 79.09,
+            payment_date: "04/15/2026".into(),
+            posted_time: "12:00".into(),
+            method: "CC".into(),
+            account_type: "utility".into(),
+        };
+        let dto = utility_payment(&p);
+        assert_eq!(dto.date, "2026-04-15");
+        assert_eq!(dto.amount.amount, "79.09");
+        assert_eq!(dto.method.as_deref(), Some("CC"));
+        assert_eq!(dto.status, None);
+        assert_eq!(dto.confirmation.as_deref(), Some("TXN123"));
+    }
+
+    #[test]
+    fn utility_payment_leaves_blank_optionals_unset() {
+        let p = Payment {
+            transaction_id: String::new(),
+            amount: 10.0,
+            payment_date: "2026-01-02".into(),
+            posted_time: String::new(),
+            method: String::new(),
+            account_type: String::new(),
+        };
+        let dto = utility_payment(&p);
+        assert_eq!(dto.method, None);
+        assert_eq!(dto.confirmation, None);
     }
 }

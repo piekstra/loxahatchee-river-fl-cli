@@ -49,7 +49,8 @@ pub fn info(ctx: &Ctx) -> Result<(), AppError> {
             "summary", "account", "balance", "charges", "status", "history", "pay", "district",
             "accounts",
         ],
-    );
+    )
+    .with_profiles(&[pk_cli_utility::PROFILE]);
     pk_cli_core::output::json(&serde_json::to_value(&info).unwrap_or_default());
     Ok(())
 }
