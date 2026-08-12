@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **`lrfl bills list`** and **`lrfl bills get <YYYY-MM-DD>`** — expose the
+  historical bill surface (piekstra-cli/1's `bills list` + `bills get <id>`
+  shape). `list` enumerates every discoverable period from the account payload
+  (current + up to 3 prior per service, keyed by ISO due date, with a
+  `statement-list/v1` envelope in `--json`); `get` downloads that period's
+  official PDF from the district's hosted archive (`-o -` streams to stdout,
+  `--all -o DIR` fetches every listed period into a directory). A `bills get`
+  call with a due date the archive doesn't have on file exits cleanly with
+  `NotFound` (exit 4) rather than saving the archive's HTML placeholder as a
+  `.pdf`. Closes #13.
+- `lrfl bill --save PATH` (the current-period shortcut) is unchanged and still
+  works.
+
 ## v0.6.0 — 2026-07-20
 
 ### Changed

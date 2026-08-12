@@ -7,6 +7,7 @@ pub mod account;
 pub mod accounts;
 pub mod auth;
 pub mod bill;
+pub mod bills;
 pub mod completions;
 pub mod config;
 pub mod district;

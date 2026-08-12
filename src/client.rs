@@ -187,6 +187,48 @@ impl Wipp {
     }
 
     /// Download raw bytes from a URL (the hosted PDF bill). Uses the browser UA.
+    ///
+    /// Guards against the archive's "no document(s) found" placeholder — for
+    /// unknown/expired periods, `docs.onlinebiller.com` returns a 200 HTML page
+    /// with an error banner instead of an actual PDF. When the response isn't a
+    /// PDF (magic bytes `%PDF` or a `Content-Type` beginning with
+    /// `application/pdf`), this returns [`AppError::NotFound`] so the CLI can
+    /// tell the user the period isn't retained upstream.
+    pub fn fetch_bill_pdf(&self, url: &str, due_date: &str) -> Result<Vec<u8>, AppError> {
+        let resp = self.client.get(url).send()?;
+        let status = resp.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(AppError::Upstream(format!(
+                "HTTP {status} fetching the bill PDF for {due_date}"
+            )));
+        }
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let bytes = resp.bytes()?.to_vec();
+        let looks_like_pdf =
+            bytes.starts_with(b"%PDF") || content_type.starts_with("application/pdf");
+        if !looks_like_pdf {
+            return Err(AppError::NotFound(format!(
+                "no bill PDF available for {due_date} — the district's document \
+                 archive returned a placeholder ({} bytes, content-type: {})",
+                bytes.len(),
+                if content_type.is_empty() {
+                    "unknown"
+                } else {
+                    &content_type
+                }
+            )));
+        }
+        Ok(bytes)
+    }
+
+    /// Download raw bytes from a URL. Used for hosted PDFs whose content-type
+    /// is trusted (e.g. the current bill via [`Wipp::bill_url`], which the
+    /// portal itself calls without a PDF-shape check).
     pub fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>, AppError> {
         let resp = self.client.get(url).send()?;
         let status = resp.status().as_u16();

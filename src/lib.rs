@@ -8,6 +8,7 @@ pub mod account;
 pub mod acct;
 pub mod auth;
 pub mod bill;
+pub mod bills;
 pub mod cli;
 pub mod client;
 pub mod commands;

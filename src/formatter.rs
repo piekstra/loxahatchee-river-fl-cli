@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 
 use crate::account::Account;
 use crate::bill::Bill;
+use crate::bills::BillPeriod;
 use crate::model::{status_word, AccountMatch, AccountStatus, District, LinkedAccount, Payment};
 
 fn money(x: f64) -> String {
@@ -152,6 +153,77 @@ pub fn print_account(a: &Account, json: bool) {
             println!("      early-pay discount {}{by}", money(c.discount_amount));
         }
     }
+}
+
+/// One historical period as the profile's `statement/v1` record. The due date
+/// doubles as the id (the WIPP hosted-PDF endpoint keys off it).
+fn utility_statement(p: &BillPeriod) -> pk_cli_utility::Statement {
+    pk_cli_utility::Statement {
+        id: p.due_date.clone(),
+        date: Some(p.due_date.clone()),
+        amount: pk_money(p.amount),
+        due_date: Some(p.due_date.clone()),
+        paid: Some(p.paid),
+    }
+}
+
+/// `bills list`: `statement-list/v1` in `--json`, a per-service table in text.
+///
+/// The provider serves one hosted PDF per due date, but the underlying data is
+/// per-service — so the `--json` list also carries a `periods[]` array that
+/// preserves the service-level detail (`service`, `current`, `principal_balance`,
+/// `period_start`/`period_end`, meter reading/usage) the profile's `statement/v1`
+/// record doesn't have a slot for.
+pub fn print_bills(account_id: &str, periods: &[BillPeriod], json: bool) {
+    if json {
+        // Dedupe by due date for the profile envelope (one hosted PDF per date).
+        let mut seen = std::collections::HashSet::new();
+        let statements: Vec<pk_cli_utility::Statement> = periods
+            .iter()
+            .filter(|p| seen.insert(p.due_date.clone()))
+            .map(utility_statement)
+            .collect();
+        let paged = pk_cli_utility::Paged::new("statement", statements);
+        let mut env = serde_json::to_value(paged).expect("serialize bills");
+        if let Some(obj) = env.as_object_mut() {
+            obj.insert("account".into(), json!(account_id));
+            obj.insert(
+                "periods".into(),
+                serde_json::to_value(periods).expect("serialize periods"),
+            );
+        }
+        print_json(&env);
+        return;
+    }
+    if periods.is_empty() {
+        println!("Account {account_id} — no bill periods on record");
+        return;
+    }
+    println!("Account {account_id} — {} bill period(s)\n", periods.len());
+    println!(
+        "  {:<12}  {:<10}  {:>9}  status",
+        "due", "service", "amount"
+    );
+    for p in periods {
+        let status = if p.current {
+            "current"
+        } else if p.paid {
+            "paid"
+        } else {
+            "outstanding"
+        };
+        println!(
+            "  {:<12}  {:<10}  {:>9}  {status}",
+            p.due_date,
+            p.service,
+            money(p.amount),
+        );
+    }
+    println!(
+        "\n  Download one:  lrfl bills get {} -o bill.pdf",
+        periods[0].due_date
+    );
+    println!("  Download all:  lrfl bills get --all -o ./bills/");
 }
 
 /// A parsed bill: bill-to owner, mailing/service address, AutoPay, totals.
@@ -678,5 +750,29 @@ mod tests {
         let dto = utility_payment(&p);
         assert_eq!(dto.method, None);
         assert_eq!(dto.confirmation, None);
+    }
+
+    #[test]
+    fn utility_statement_maps_bill_period_to_profile_dto() {
+        let p = crate::bills::BillPeriod {
+            due_date: "2026-05-13".into(),
+            service: "Sewer".into(),
+            amount: 79.09,
+            interest: 0.0,
+            principal_balance: 0.0,
+            paid: true,
+            current: false,
+            period_start: String::new(),
+            period_end: String::new(),
+            reading_date: String::new(),
+            reading: None,
+            usage: None,
+        };
+        let dto = super::utility_statement(&p);
+        assert_eq!(dto.id, "2026-05-13");
+        assert_eq!(dto.date.as_deref(), Some("2026-05-13"));
+        assert_eq!(dto.due_date.as_deref(), Some("2026-05-13"));
+        assert_eq!(dto.amount.amount, "79.09");
+        assert_eq!(dto.paid, Some(true));
     }
 }

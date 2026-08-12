@@ -106,6 +106,8 @@ pub enum Command {
     /// Show the current bill parsed from the official PDF: bill-to owner, mailing
     /// address, AutoPay status, service period, last payment, total due — data the
     /// API redacts/omits. `--open` opens the PDF; `--save PATH` downloads it.
+    ///
+    /// For prior periods, see `lrfl bills list` / `lrfl bills get`.
     Bill {
         #[command(flatten)]
         account: AccountArg,
@@ -115,6 +117,14 @@ pub enum Command {
         /// Download the PDF bill to this file instead of parsing it.
         #[arg(long, value_name = "PATH")]
         save: Option<String>,
+    },
+
+    /// Historical bills: list past periods (`bills list`) and download any
+    /// period's official PDF by id (`bills get <YYYY-MM-DD>`), matching the
+    /// piekstra-cli/1 `bills list` + `bills get <id>` shape.
+    Bills {
+        #[command(subcommand)]
+        action: BillsCmd,
     },
 
     /// Find accounts by street/property address (e.g. `lrfl search "MAPLE"`).
@@ -186,6 +196,47 @@ pub enum Command {
         /// Shell to generate completions for.
         #[arg(value_enum)]
         shell: Shell,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BillsCmd {
+    /// Enumerate discoverable bill periods (current + up to 3 prior per service).
+    #[command(visible_alias = "ls")]
+    List {
+        #[command(flatten)]
+        account: AccountArg,
+        /// Filter to one service by name (e.g. `Sewer`, `Water`).
+        #[arg(long, value_name = "NAME")]
+        service: Option<String>,
+    },
+    /// Download a bill PDF by its period id (`YYYY-MM-DD` due date).
+    /// `-o -` streams to stdout; `--all` downloads every listed period.
+    ///
+    /// You can also pass a due date that isn't in `bills list` (e.g. a period
+    /// older than the account's 3-prior window); WIPP's hosted-PDF archive
+    /// serves those on request when it has them, and this errors cleanly when
+    /// it doesn't.
+    #[command(visible_alias = "download")]
+    Get {
+        /// Period id: the due date shown by `bills list`, e.g. `2026-05-13`.
+        /// Omit and pass `--all` to download every discoverable period.
+        #[arg(value_name = "PERIOD-ID")]
+        period_id: Option<String>,
+        /// Account number, `NNNNNNN-N`. Falls back to `$LRFL_ACCOUNT`, then
+        /// the default set via `lrfl config set-account`, then your logged-in
+        /// linked account.
+        #[arg(value_name = "ACCOUNT", env = "LRFL_ACCOUNT")]
+        account: Option<String>,
+        /// Download every listed period into `-o DIR` (or the current dir).
+        #[arg(long, conflicts_with = "period_id")]
+        all: bool,
+        /// Output target. Single id: a file path or `-` for stdout. `--all`: a
+        /// directory. Default: `./lrfl-bill-<account>-<YYYY-MM-DD>.pdf` in the
+        /// current directory (or `<DIR>/lrfl-bill-<account>-<YYYY-MM-DD>.pdf`
+        /// per file, with `--all`).
+        #[arg(long, short, value_name = "PATH")]
+        output: Option<String>,
     },
 }
 
