@@ -155,16 +155,24 @@ pub fn print_account(a: &Account, json: bool) {
     }
 }
 
-/// One historical period as the profile's `statement/v1` record. The due date
-/// doubles as the id (the WIPP hosted-PDF endpoint keys off it).
-fn utility_statement(p: &BillPeriod) -> pk_cli_utility::Statement {
-    pk_cli_utility::Statement {
-        id: p.due_date.clone(),
-        date: Some(p.due_date.clone()),
-        amount: pk_money(p.amount),
-        due_date: Some(p.due_date.clone()),
-        paid: Some(p.paid),
-    }
+/// The `statement/v1` record for a group of periods that share a due date
+/// (WIPP serves one hosted PDF per date, so the profile envelope collapses
+/// per-service rows into one statement). The record borrows `id`/`date`/
+/// `amount` from the first period in the group but aggregates **`paid`
+/// conservatively**: it is only `true` when *every* per-service billing on
+/// that date is paid, so a partially-paid period (e.g. Water paid + Sewer
+/// outstanding) reports `paid: false` rather than whichever service happened
+/// to sort first. Per-service detail (including the individual `paid` flags)
+/// stays available in the sidecar `periods[]` array on the same envelope.
+fn utility_statement_from_group(group: &[&BillPeriod]) -> Option<pk_cli_utility::Statement> {
+    let rep = group.first()?;
+    Some(pk_cli_utility::Statement {
+        id: rep.due_date.clone(),
+        date: Some(rep.due_date.clone()),
+        amount: pk_money(rep.amount),
+        due_date: Some(rep.due_date.clone()),
+        paid: Some(group.iter().all(|p| p.paid)),
+    })
 }
 
 /// `bills list`: `statement-list/v1` in `--json`, a per-service table in text.
@@ -176,12 +184,21 @@ fn utility_statement(p: &BillPeriod) -> pk_cli_utility::Statement {
 /// record doesn't have a slot for.
 pub fn print_bills(account_id: &str, periods: &[BillPeriod], json: bool) {
     if json {
-        // Dedupe by due date for the profile envelope (one hosted PDF per date).
-        let mut seen = std::collections::HashSet::new();
-        let statements: Vec<pk_cli_utility::Statement> = periods
+        // Dedupe by due date for the profile envelope (one hosted PDF per
+        // date). Where multiple services share a due date, aggregate their
+        // `paid` flags with `all()` — see `utility_statement_from_group`.
+        let mut order: Vec<String> = Vec::new();
+        for p in periods {
+            if !order.iter().any(|d| d == &p.due_date) {
+                order.push(p.due_date.clone());
+            }
+        }
+        let statements: Vec<pk_cli_utility::Statement> = order
             .iter()
-            .filter(|p| seen.insert(p.due_date.clone()))
-            .map(utility_statement)
+            .filter_map(|d| {
+                let group: Vec<&BillPeriod> = periods.iter().filter(|p| &p.due_date == d).collect();
+                utility_statement_from_group(&group)
+            })
             .collect();
         let paged = pk_cli_utility::Paged::new("statement", statements);
         let mut env = serde_json::to_value(paged).expect("serialize bills");
@@ -752,27 +769,69 @@ mod tests {
         assert_eq!(dto.confirmation, None);
     }
 
-    #[test]
-    fn utility_statement_maps_bill_period_to_profile_dto() {
-        let p = crate::bills::BillPeriod {
-            due_date: "2026-05-13".into(),
-            service: "Sewer".into(),
-            amount: 79.09,
+    /// Helper for the group-aggregation tests below: a same-due-date period
+    /// on `service` with the given paid flag. Other fields aren't part of the
+    /// aggregation contract, so they're stubbed.
+    fn period_at(due: &str, service: &str, paid: bool) -> crate::bills::BillPeriod {
+        crate::bills::BillPeriod {
+            due_date: due.into(),
+            service: service.into(),
+            amount: 10.0,
             interest: 0.0,
-            principal_balance: 0.0,
-            paid: true,
+            principal_balance: if paid { 0.0 } else { 10.0 },
+            paid,
             current: false,
             period_start: String::new(),
             period_end: String::new(),
             reading_date: String::new(),
             reading: None,
             usage: None,
-        };
-        let dto = super::utility_statement(&p);
+        }
+    }
+
+    /// Common LOXA case: Water + Sewer share a due date, one paid and one
+    /// outstanding. The collapsed `statement/v1` must report `paid: false` —
+    /// silently keeping the first service's flag would mislead consumers
+    /// scripting against this field.
+    #[test]
+    fn statement_group_reports_unpaid_when_any_service_is_outstanding() {
+        let sewer = period_at("2026-05-13", "Sewer", false);
+        let water = period_at("2026-05-13", "Water", true);
+        // Both service orders — first-Sewer-then-Water and its reverse — must
+        // produce the same envelope-level `paid: false`, since the fix's whole
+        // point is that iteration order does not decide the flag.
+        let dto_a = super::utility_statement_from_group(&[&sewer, &water]).unwrap();
+        let dto_b = super::utility_statement_from_group(&[&water, &sewer]).unwrap();
+        assert_eq!(dto_a.paid, Some(false));
+        assert_eq!(dto_b.paid, Some(false));
+    }
+
+    /// The happy path: every service on the period is paid → `paid: true`.
+    #[test]
+    fn statement_group_reports_paid_when_every_service_is_paid() {
+        let sewer = period_at("2026-05-13", "Sewer", true);
+        let water = period_at("2026-05-13", "Water", true);
+        let dto = super::utility_statement_from_group(&[&sewer, &water]).unwrap();
+        assert_eq!(dto.paid, Some(true));
+    }
+
+    /// A single-service period aggregates trivially — this is the LOXA case
+    /// today (Sewer-only accounts) and also serves as the id/date/amount
+    /// shape test that used to live on the removed single-period helper.
+    #[test]
+    fn statement_group_single_service_matches_single_period_shape() {
+        let sewer = period_at("2026-05-13", "Sewer", true);
+        let dto = super::utility_statement_from_group(&[&sewer]).unwrap();
         assert_eq!(dto.id, "2026-05-13");
         assert_eq!(dto.date.as_deref(), Some("2026-05-13"));
         assert_eq!(dto.due_date.as_deref(), Some("2026-05-13"));
-        assert_eq!(dto.amount.amount, "79.09");
+        assert_eq!(dto.amount.amount, "10.00");
         assert_eq!(dto.paid, Some(true));
+    }
+
+    /// An empty group has no representative row to build a statement from.
+    #[test]
+    fn statement_group_of_zero_periods_is_none() {
+        assert!(super::utility_statement_from_group(&[]).is_none());
     }
 }
