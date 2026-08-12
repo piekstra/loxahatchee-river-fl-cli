@@ -187,6 +187,45 @@ impl Wipp {
     }
 
     /// Download raw bytes from a URL (the hosted PDF bill). Uses the browser UA.
+    ///
+    /// Guards against the archive's "no document(s) found" placeholder — for
+    /// unknown/expired periods, `docs.onlinebiller.com` returns a 200 HTML page
+    /// with an error banner instead of an actual PDF. When the response fails
+    /// the [`looks_like_real_pdf`] check, this returns [`AppError::NotFound`]
+    /// so the CLI can tell the user the period isn't retained upstream.
+    pub fn fetch_bill_pdf(&self, url: &str, due_date: &str) -> Result<Vec<u8>, AppError> {
+        let resp = self.client.get(url).send()?;
+        let status = resp.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(AppError::Upstream(format!(
+                "HTTP {status} fetching the bill PDF for {due_date}"
+            )));
+        }
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let bytes = resp.bytes()?.to_vec();
+        if !looks_like_real_pdf(&bytes, &content_type) {
+            return Err(AppError::NotFound(format!(
+                "no bill PDF available for {due_date} — the district's document \
+                 archive returned a placeholder ({} bytes, content-type: {})",
+                bytes.len(),
+                if content_type.is_empty() {
+                    "unknown"
+                } else {
+                    &content_type
+                }
+            )));
+        }
+        Ok(bytes)
+    }
+
+    /// Download raw bytes from a URL. Used for hosted PDFs whose content-type
+    /// is trusted (e.g. the current bill via [`Wipp::bill_url`], which the
+    /// portal itself calls without a PDF-shape check).
     pub fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>, AppError> {
         let resp = self.client.get(url).send()?;
         let status = resp.status().as_u16();
@@ -399,4 +438,91 @@ fn body_message(body: &Value) -> Option<String> {
         .or_else(|| body.get("error"))
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// Sniff whether a response body is a real PDF (vs. the district's
+/// document-archive HTML placeholder that `docs.onlinebiller.com` serves as
+/// `200 text/html` when a requested due date isn't on file).
+///
+/// A body is treated as a real PDF when it either:
+///   * starts with the `%PDF` magic bytes (authoritative — this is the format's
+///     required file header, so a stray or misconfigured content-type can't
+///     mask a good PDF); or
+///   * has a `Content-Type` beginning with `application/pdf` **and** a
+///     non-empty body (covers the rare server that trims the magic prefix or
+///     wraps the bytes; an empty body with the right content-type is still
+///     rejected — an empty PDF is not a real PDF).
+///
+/// `starts_with` (never `contains`) is deliberate: a text/html placeholder can
+/// legitimately mention `%PDF` in its body without being a PDF.
+fn looks_like_real_pdf(bytes: &[u8], content_type: &str) -> bool {
+    if bytes.starts_with(b"%PDF") {
+        return true;
+    }
+    !bytes.is_empty() && content_type.trim_start().starts_with("application/pdf")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_like_real_pdf;
+
+    /// The happy path: real PDF bytes, correct `application/pdf` type.
+    #[test]
+    fn real_pdf_bytes_with_application_pdf_content_type_pass() {
+        let bytes = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n2 0 obj\n";
+        assert!(looks_like_real_pdf(bytes, "application/pdf"));
+    }
+
+    /// Some CDN/S3 configurations serve PDFs as octet-stream. The magic bytes
+    /// override the content-type so the caller still writes the file.
+    #[test]
+    fn real_pdf_bytes_with_octet_stream_content_type_pass() {
+        let bytes = b"%PDF-1.4\n";
+        assert!(looks_like_real_pdf(bytes, "application/octet-stream"));
+    }
+
+    /// The exact observed placeholder: a 200 HTML error page from
+    /// `docs.onlinebiller.com` when the due date isn't on file. This is the
+    /// case the guard exists to catch — regressing it would save a
+    /// ~366-byte HTML file as `.pdf`.
+    #[test]
+    fn html_placeholder_with_text_html_content_type_is_rejected() {
+        let placeholder = b"<!DOCTYPE html><html><head><link rel=\"stylesheet\" \
+            type=\"text/css\" href=\"css/infosend.css\"></head><body>\
+            <div id=\"logo\"></div><table class=\"DocumentList\"><tr><td \
+            id=\"error_message\" class=\"error_message\">An error has occurred, \
+            please contact Loxahatchee River District support with the following \
+            information:<br><br>No document(s) found.</td></tr></table></body></html>";
+        assert!(!looks_like_real_pdf(
+            placeholder,
+            "text/html; charset=UTF-8"
+        ));
+    }
+
+    /// An empty body served with `application/pdf` is not a real PDF — refusing
+    /// it means an empty file never gets written and the caller sees the same
+    /// "no bill available" `NotFound` the archive placeholder would produce.
+    #[test]
+    fn empty_bytes_with_application_pdf_content_type_are_rejected() {
+        assert!(!looks_like_real_pdf(b"", "application/pdf"));
+    }
+
+    /// Regression guard: HTML that happens to mention `%PDF` in its body (e.g.
+    /// documentation or an error page quoting a filename) must NOT be treated
+    /// as a real PDF. This is why the magic check uses `starts_with`, never
+    /// `contains`.
+    #[test]
+    fn html_with_embedded_pdf_string_is_rejected() {
+        let body = b"<html><body>Attach a %PDF-1.7 file to submit.</body></html>";
+        assert!(!looks_like_real_pdf(body, "text/html"));
+    }
+
+    /// A PDF byte body with no content-type header still passes on magic alone —
+    /// matches the observed behavior of `docs.onlinebiller.com` for legitimate
+    /// bills. Guards against an over-strict future rewrite that would drop the
+    /// magic short-circuit.
+    #[test]
+    fn real_pdf_bytes_with_missing_content_type_pass() {
+        assert!(looks_like_real_pdf(b"%PDF-1.7\n", ""));
+    }
 }

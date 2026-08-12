@@ -120,17 +120,46 @@ codes (`A` active, `N` none).
 postTime, paymentDate, userPart3/4/5 }]`. The entity segment is the literal
 `wippUtil` (not `U`/`UTILITY` — those 400 with "No enum constant").
 
-### Bill PDF  → powers `bill`
+### Bill PDF  → powers `bill` and `bills get`
 `GET /wippUtil/{id}/retrieveThirdPartyBillUrl?dueDate=YYYY-MM-DD` →
 `{ url }` — a hosted PDF at `docs.onlinebiller.com/documents.php?client=loxahtchee&action=<token>`.
-Anonymous; `dueDate` must be the bill's current due date (take it from the
-account's `currDueDate`). The PDF's **text layer** carries data the redacted API
-does not: a `[KEY=VALUE]` block (`Sys_Acct_ID`, `Sys_Balance`, multi-line
-`Sys_FullAddress` = bill-to name + mailing address, `CSERVADDR`, `CDATE`,
-`CDUEDATE`, `AUTOPAY_FLAG`, `PAPERLESS_FLAG`, `OCRLINE`) plus labeled lines
-(`Service Period:`, `Last Payment:`). `bill` extracts + parses it. Owner-billed
-accounts show the real name; occupant-billed ones read `OCCUPANT`. Note
-`RedactOwnerName` blanks owner in the JSON API but **not** in the bill PDF.
+Anonymous. `dueDate` is the **due date** of the desired bill (ISO
+`YYYY-MM-DD`) — pass the account's `currDueDate` for the current bill, or a
+`priorDueDate{1,2,3}` for a prior period. The PDF's **text layer** carries data
+the redacted API does not: a `[KEY=VALUE]` block (`Sys_Acct_ID`, `Sys_Balance`,
+multi-line `Sys_FullAddress` = bill-to name + mailing address, `CSERVADDR`,
+`CDATE`, `CDUEDATE`, `AUTOPAY_FLAG`, `PAPERLESS_FLAG`, `OCRLINE`) plus labeled
+lines (`Service Period:`, `Last Payment:`). `bill` extracts + parses it.
+Owner-billed accounts show the real name; occupant-billed ones read `OCCUPANT`.
+Note `RedactOwnerName` blanks owner in the JSON API but **not** in the bill
+PDF.
+
+**No document-list endpoint.** WIPP does not expose a "bills for this account"
+enumeration — only the per-due-date lookup above. `lrfl bills list` therefore
+derives its rows from the `chargeTypes[svc]` block already returned by
+`/wippUtil/{id}`: the **current** period (`currDueDate` +
+`currPrd{Start,End}Date` + `currPrdBilled`) and up to **three prior periods**
+per service (`priorDueDate{1,2,3}` + `priorPrdBilled{1,2,3}` +
+`priorPrdInt{1,2,3}` + `priorPrdPrnBal{1,2,3}` + prior meter readings/usage
+where metered). For LOXA's quarterly cadence that's one year of history per
+service.
+
+**Placeholder guard.** For due dates the archive doesn't have on file
+`docs.onlinebiller.com` still answers `200` — but with a ~366-byte HTML page
+titled "An error has occurred … No document(s) found" instead of a PDF.
+`lrfl bills get` sniffs the PDF magic (`%PDF`) and returns
+`AppError::NotFound` (exit `4`) when the response isn't one, so a missing
+period fails cleanly instead of writing a bogus file.
+
+The portal's own `getUtilBill` path (`POST /wippUtil/{id}/generateUtilityBill`
+with `{ includeWater/Sewer/Electric/Other, dueDate }`, async → `{ s3FileKey }`
+resolved through `POST /sabreMcsjProxy/attachments {source:"WIPP",
+clientMethod:"get_object", objectName, targetBucket:"downloads-short-retention"}`
+→ a signed S3 URL) also generates historical bills on demand — but LOXA's
+`ThirdPartyPDFPrint` flag steers the portal (and `lrfl`) to the hosted archive
+above, which returns the district's official third-party PDF rather than a
+just-generated one. The generate path is documented here for completeness; the
+CLI does not currently use it.
 
 ### Paying
 Card capture is **not** a plain JSON POST: it runs through the tenant's processor

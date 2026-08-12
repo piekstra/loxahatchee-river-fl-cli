@@ -41,6 +41,10 @@ lrfl pay --open              # compute the amount and open the Pay Now page
 lrfl search "MAPLE"          # find accounts by address (no account number needed)
 lrfl search "MAPLE" --full   # …with owner, mailing addr, AutoPay & balance folded in
 lrfl bill 1234567-0          # the current bill (owner, mailing addr, AutoPay) from the PDF
+
+lrfl bills list              # every discoverable period (current + up to 3 prior per service)
+lrfl bills get 2025-11-12    # download that period's official PDF (`-o -` streams to stdout)
+lrfl bills get --all -o ./bills/    # download every listed period into ./bills/
 ```
 
 `search` gives you an account number; feed it to `bill`, `account`, or `balance`
@@ -63,6 +67,8 @@ You can always pass an account explicitly (`lrfl balance 1234567-0`), or set
 | `lrfl pay [ACCT]` | Compute the amount due and hand off to the portal's Pay Now page (`--open`) |
 | `lrfl open [ACCT]` | Open the account's portal page in your browser |
 | `lrfl bill [ACCT]` | The current bill from the official PDF: bill-to owner, mailing address, AutoPay, period, total due (`--open` opens the PDF, `--save PATH` downloads it) |
+| `lrfl bills list [ACCT]` | Historical bill periods: current + up to 3 prior per service (`statement-list/v1` with `--json`) |
+| `lrfl bills get <YYYY-MM-DD> [ACCT]` | Download a past period's official PDF; `-o PATH` (`-` for stdout). With `--json`, emits `bill-download/v1` (single id) or `bill-download-batch/v1` (`--all -o DIR`) — see the JSON section |
 | `lrfl search <ADDR>` | Find accounts by street/property address (`--limit N`; `-b/--balances` adds each match's balance; `--full` folds in each match's bill detail) — no login |
 | `lrfl district` | District info: billed services, payment options, contact |
 | `lrfl config …` | `set-account`, `show`, `clear` the saved default account |
@@ -142,6 +148,20 @@ lrfl history --json | jq '[.items[].amount.amount | tonumber] | add'
 
 # Machine-readable service status:
 lrfl status --json | jq '{sewer, overall}'
+
+# List past bill periods (statement-list/v1 — canonical `.items`, plus a
+# per-service `.periods` array with the current/paid flags and readings):
+lrfl bills list --json | jq '.items[] | {id, amount: .amount.amount}'
+
+# Download one period's PDF and grab the saved path + size (bill-download/v1 —
+# fields: schema, account, period_id, source_url, path, bytes):
+lrfl bills get 2025-11-12 --json -o /tmp/nov.pdf | jq '{path, bytes}'
+
+# Archive every period the district has on file and count what was saved vs.
+# skipped (bill-download-batch/v1 — fields: schema, account, count,
+# bytes_total, dir, items[{period_id, source_url, path, bytes}],
+# skipped[{period_id, reason}]):
+lrfl bills get --all --json -o ./bills/ | jq '{count, bytes_total, skipped}'
 ```
 
 In `--json` mode the JSON document is the only thing on **stdout**; diagnostics
