@@ -3,19 +3,19 @@
 //! Loxahatchee statements are the hosted bill PDFs, keyed by ISO due date, so a
 //! document's id is that due date. `documents list` enumerates the downloadable
 //! periods; `documents download <id>` fetches the PDF — the same file
-//! `bills get <id>` produces (reuses `bills::fetch_period`). Only the file
-//! surface is here; `bills list` remains the utility/v1 statement view.
+//! `bills get <id>` produces, over the shared [`crate::download`] core (so the
+//! two surfaces can't drift). Only the file surface is here; `bills list`
+//! remains the utility/v1 statement view.
 
 use std::io::Write;
 use std::path::PathBuf;
 
-use pk_cli_documents::{Document, DownloadBatch, Paged, SavedDocument};
+use pk_cli_documents::{Document, DownloadBatch, Paged, SavedDocument, SkippedDocument};
 
-use crate::acct::AccountId;
 use crate::bills::BillPeriod;
 use crate::cli::{AccountArg, DocumentsCmd};
-use crate::commands::bills::{default_filename, fetch_period, resolve_target};
 use crate::commands::Ctx;
+use crate::download;
 use crate::error::AppError;
 
 pub fn run(ctx: &Ctx, cmd: &DocumentsCmd) -> Result<(), AppError> {
@@ -35,26 +35,6 @@ pub fn run(ctx: &Ctx, cmd: &DocumentsCmd) -> Result<(), AppError> {
     }
 }
 
-/// Downloadable periods for an account, deduped by ISO due date (one hosted PDF
-/// per date) and newest-first.
-fn document_periods(
-    ctx: &Ctx,
-    account: &AccountArg,
-    service: Option<&str>,
-) -> Result<(AccountId, Vec<String>), AppError> {
-    let id = ctx.resolve_account(account)?;
-    let mut periods = BillPeriod::list_from_account(&ctx.api.utility_account(&id)?);
-    if let Some(svc) = service {
-        let want = svc.trim().to_ascii_lowercase();
-        periods.retain(|p| p.service.eq_ignore_ascii_case(&want));
-    }
-    let mut dues: Vec<String> = periods.iter().map(|p| p.due_date.clone()).collect();
-    dues.sort();
-    dues.dedup();
-    dues.reverse(); // newest first
-    Ok((id, dues))
-}
-
 /// A due date → a documents/v1 [`Document`] (id = ISO due date; no financial
 /// fields — an amount belongs to the utility/v1 statement, not the file).
 fn document_of(due: &str) -> Document {
@@ -72,7 +52,9 @@ fn saved_doc(due: &str, path: &str, bytes: usize) -> SavedDocument {
 }
 
 fn list(ctx: &Ctx, account: &AccountArg, service: Option<&str>) -> Result<(), AppError> {
-    let (_id, dues) = document_periods(ctx, account, service)?;
+    let id = ctx.resolve_account(account)?;
+    let periods = BillPeriod::list_from_account(&ctx.api.utility_account(&id)?);
+    let dues = download::due_dates(&periods, service);
     let docs: Vec<Document> = dues.iter().map(|d| document_of(d)).collect();
     if ctx.json {
         println!(
@@ -114,15 +96,15 @@ fn download(
             ))
         }
     };
-    let (_source_url, bytes) = fetch_period(ctx, &acct_id, &due)?;
+    let (_source_url, bytes) = download::fetch_period(&ctx.api, &acct_id, &due)?;
 
     if output == Some("-") {
         return std::io::stdout()
             .write_all(&bytes)
             .map_err(|e| AppError::Other(format!("writing PDF to stdout: {e}")));
     }
-    let default = default_filename(&acct_id, &due);
-    let target = resolve_target(output, &default);
+    let default = download::default_filename(&acct_id, &due);
+    let target = download::resolve_target(output, &default);
     std::fs::write(&target, &bytes)
         .map_err(|e| AppError::Other(format!("writing {}: {e}", target.display())))?;
 
@@ -146,46 +128,40 @@ fn download_all(ctx: &Ctx, account: &AccountArg, output: Option<&str>) -> Result
             "--all can't stream to stdout; give a directory with -o, or omit it".into(),
         ));
     }
-    let (acct_id, dues) = document_periods(ctx, account, None)?;
-    let dir = output.map(PathBuf::from).unwrap_or_default();
-    if !dir.as_os_str().is_empty() && !dir.exists() {
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| AppError::Other(format!("creating {}: {e}", dir.display())))?;
-    }
+    let acct_id = ctx.resolve_account(account)?;
+    let periods = BillPeriod::list_from_account(&ctx.api.utility_account(&acct_id)?);
+    let dues = download::due_dates(&periods, None);
 
-    let mut items = Vec::new();
-    for due in &dues {
-        ctx.log(&format!("fetching bill {due}"));
-        match fetch_period(ctx, &acct_id, due) {
-            Ok((_url, bytes)) => {
-                let file = default_filename(&acct_id, due);
-                let target = if dir.as_os_str().is_empty() {
-                    PathBuf::from(&file)
-                } else {
-                    dir.join(&file)
-                };
-                std::fs::write(&target, &bytes)
-                    .map_err(|e| AppError::Other(format!("writing {}: {e}", target.display())))?;
-                items.push(saved_doc(due, &target.display().to_string(), bytes.len()));
-            }
-            // A listed period with no PDF on file: skip so one gap doesn't
-            // abort the batch (mirrors `bills download --all`).
-            Err(AppError::NotFound(_)) => continue,
-            Err(e) => return Err(e),
-        }
-    }
+    let dir = output.map(PathBuf::from).unwrap_or_default();
+    download::ensure_dir(&dir)?;
+    let (saved, skipped) = download::download_periods(&ctx.api, &acct_id, &dues, &dir, |d| {
+        ctx.log(&format!("fetching bill {d}"))
+    })?;
 
     let where_to = if dir.as_os_str().is_empty() {
         ".".to_string()
     } else {
         dir.display().to_string()
     };
-    let batch = DownloadBatch::new(where_to, items);
+    let items: Vec<SavedDocument> = saved
+        .iter()
+        .map(|s| saved_doc(&s.due, &s.path, s.bytes as usize))
+        .collect();
+    // Surface listed periods with no PDF on file instead of silently coming up
+    // short — the same partial-failure reporting `bills download --all` gives.
+    let skips: Vec<SkippedDocument> = skipped
+        .iter()
+        .map(|s| SkippedDocument::new(s.due.clone(), s.reason.clone()).with_code(s.code))
+        .collect();
+    let batch = DownloadBatch::new(where_to, items).with_skipped(skips);
     if ctx.json {
         println!("{}", serde_json::to_string_pretty(&batch).expect("json"));
     } else if !ctx.quiet {
         for it in &batch.items {
             println!("Saved {} → {} ({} bytes)", it.id, it.path, it.bytes);
+        }
+        for s in &batch.skipped {
+            eprintln!("skipped {}: {}", s.id, s.reason);
         }
         println!(
             "{} bill(s), {} bytes → {}",
