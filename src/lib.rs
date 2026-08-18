@@ -13,6 +13,7 @@ pub mod cli;
 pub mod client;
 pub mod commands;
 pub mod config;
+pub mod download;
 pub mod error;
 pub mod formatter;
 pub mod model;

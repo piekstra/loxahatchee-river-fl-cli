@@ -127,6 +127,14 @@ pub enum Command {
         action: BillsCmd,
     },
 
+    /// Statement documents: list and download official bill PDFs (documents/v1
+    /// profile). A document's id is its ISO due date, so this is the same PDF
+    /// surface as `bills`, under the shared profile spelling.
+    Documents {
+        #[command(subcommand)]
+        action: DocumentsCmd,
+    },
+
     /// Find accounts by street/property address (e.g. `lrfl search "MAPLE"`).
     /// The district matches server-side (case-insensitive substring); no login.
     /// Pass a match's account number to `bill`, `account`, or `balance` for full
@@ -235,6 +243,39 @@ pub enum BillsCmd {
         /// directory. Default: `./lrfl-bill-<account>-<YYYY-MM-DD>.pdf` in the
         /// current directory (or `<DIR>/lrfl-bill-<account>-<YYYY-MM-DD>.pdf`
         /// per file, with `--all`).
+        #[arg(long, short, value_name = "PATH")]
+        output: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DocumentsCmd {
+    /// List downloadable statement documents, newest first (document-list/v1).
+    #[command(visible_alias = "ls")]
+    List {
+        #[command(flatten)]
+        account: AccountArg,
+        /// Filter to one service by name (e.g. `Sewer`, `Water`).
+        #[arg(long, value_name = "NAME")]
+        service: Option<String>,
+    },
+    /// Download a statement PDF by id (its ISO due date), or every one with
+    /// `--all`. `-o -` streams a single document to stdout.
+    #[command(visible_alias = "get")]
+    Download {
+        /// Document id from `documents list` — the ISO due date, e.g.
+        /// `2026-05-13`. Omit and pass `--all` to download every one.
+        #[arg(value_name = "ID")]
+        id: Option<String>,
+        /// Account number, `NNNNNNN-N` (falls back to `$LRFL_ACCOUNT`, config,
+        /// or your linked account).
+        #[arg(value_name = "ACCOUNT", env = "LRFL_ACCOUNT")]
+        account: Option<String>,
+        /// Download every statement into `-o DIR` (or the current dir).
+        #[arg(long, conflicts_with = "id")]
+        all: bool,
+        /// Output target: a file or `-` for stdout (single id), or a directory
+        /// (with `--all`). Default: `./lrfl-bill-<account>-<id>.pdf`.
         #[arg(long, short, value_name = "PATH")]
         output: Option<String>,
     },

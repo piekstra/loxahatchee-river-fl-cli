@@ -3,6 +3,26 @@
 ## Unreleased
 
 ### Added
+- **`lrfl documents list`** and **`lrfl documents download <id>`** — the same
+  bill PDFs, exposed under cli-common's shared **`documents/v1`** profile so the
+  file surface is spelled identically across the CLI family. A document's id is
+  its ISO due date; `list` emits `document-list/v1` and `download` emits
+  `document-download/v1` (or `document-download-batch/v1` with `--all -o DIR`).
+  `bills get` stays as the utility-flavored alias for the same file. `lrfl info`
+  now advertises the `documents/v1` profile. `documents download --all` reports
+  any period with no PDF on file in the batch's `skipped` array (each with a
+  machine `code` of `no_file`) rather than silently coming up short.
+
+### Changed
+- The bill-PDF download core (URL fetch, filename, directory batch with skip
+  collection) moved into a shared `download` module that both `bills` and
+  `documents` render over, so the two spellings of the same download can't
+  drift. `bills download --all` now lists periods newest-first (was oldest) and
+  its `skipped` entries are unchanged in shape.
+- cli-common dependency pin moved **v0.2.0 → v0.7.0** — v0.5.0 introduced the
+  `documents/v1` profile (`pk-cli-documents`) and v0.7.0 added the batch
+  `skipped` reporting (`DownloadBatch::with_skipped` / `SkippedDocument`) this
+  release consumes.
 - **`lrfl bills list`** and **`lrfl bills get <YYYY-MM-DD>`** — expose the
   historical bill surface (piekstra-cli/1's `bills list` + `bills get <id>`
   shape). `list` enumerates every discoverable period from the account payload

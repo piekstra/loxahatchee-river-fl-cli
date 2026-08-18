@@ -6,14 +6,14 @@
 //!   PDF for that period via the same anonymous hosted-PDF chain `bill` uses.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::json;
 
-use crate::acct::AccountId;
 use crate::bills::BillPeriod;
 use crate::cli::{AccountArg, BillsCmd};
 use crate::commands::Ctx;
+use crate::download;
 use crate::error::AppError;
 use crate::formatter;
 
@@ -78,7 +78,7 @@ fn download_one(
             "period id must be an ISO due date YYYY-MM-DD (see `lrfl bills list`), got {period_id:?}"
         ))
     })?;
-    let (path, bytes) = fetch_period(ctx, &id, &due)?;
+    let (path, bytes) = download::fetch_period(&ctx.api, &id, &due)?;
 
     if output == Some("-") {
         std::io::stdout()
@@ -95,8 +95,8 @@ fn download_one(
         return Ok(());
     }
 
-    let default = default_filename(&id, &due);
-    let target = resolve_target(output, &default);
+    let default = download::default_filename(&id, &due);
+    let target = download::resolve_target(output, &default);
     std::fs::write(&target, &bytes)
         .map_err(|e| AppError::Other(format!("writing {}: {e}", target.display())))?;
 
@@ -130,155 +130,46 @@ fn download_all(ctx: &Ctx, account: &AccountArg, output: Option<&str>) -> Result
     }
     let id = ctx.resolve_account(account)?;
     let periods = BillPeriod::list_from_account(&ctx.api.utility_account(&id)?);
-
-    // Dedupe by due date: WIPP serves one hosted PDF per due date, even when
-    // multiple services share the period (e.g. Water + Sewer). Fetching the
-    // same PDF once and per service would just overwrite the same file.
-    let mut due_dates: Vec<String> = periods.iter().map(|p| p.due_date.clone()).collect();
-    due_dates.sort();
-    due_dates.dedup();
+    let dues = download::due_dates(&periods, None);
 
     let dir = output.map(PathBuf::from).unwrap_or_default();
-    if !dir.as_os_str().is_empty() && !dir.exists() {
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| AppError::Other(format!("creating {}: {e}", dir.display())))?;
-    }
+    download::ensure_dir(&dir)?;
+    let (saved, skipped) = download::download_periods(&ctx.api, &id, &dues, &dir, |d| {
+        ctx.log(&format!("fetching bill {d}"))
+    })?;
 
-    let mut items = Vec::new();
-    let mut bytes_total: u64 = 0;
-    let mut skipped: Vec<(String, String)> = Vec::new();
-    for due in &due_dates {
-        ctx.log(&format!("fetching bill {due}"));
-        match fetch_period(ctx, &id, due) {
-            Ok((source_url, bytes)) => {
-                let file = default_filename(&id, due);
-                let target = if dir.as_os_str().is_empty() {
-                    PathBuf::from(&file)
-                } else {
-                    dir.join(&file)
-                };
-                std::fs::write(&target, &bytes)
-                    .map_err(|e| AppError::Other(format!("writing {}: {e}", target.display())))?;
-                bytes_total += bytes.len() as u64;
-                items.push(json!({
-                    "period_id": due,
-                    "source_url": source_url,
-                    "path": target.display().to_string(),
-                    "bytes": bytes.len(),
-                }));
-            }
-            Err(AppError::NotFound(msg)) => {
-                // A period is listed but no PDF is on file (rare — LOXA's
-                // archive usually keeps at least the 3-prior window). Record
-                // and keep going so one gap doesn't abort the batch.
-                skipped.push((due.clone(), msg));
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    let where_to = if dir.as_os_str().is_empty() {
-        ".".to_string()
-    } else {
-        dir.display().to_string()
-    };
+    let where_to = download::dir_label(&dir);
+    let bytes_total: u64 = saved.iter().map(|s| s.bytes).sum();
     let dto = json!({
         "schema": "bill-download-batch/v1",
         "account": id.dashed(),
-        "count": items.len(),
+        "count": saved.len(),
         "bytes_total": bytes_total,
         "dir": where_to,
-        "items": items,
+        "items": saved
+            .iter()
+            .map(|s| json!({
+                "period_id": s.due,
+                "source_url": s.source_url,
+                "path": s.path,
+                "bytes": s.bytes,
+            }))
+            .collect::<Vec<_>>(),
         "skipped": skipped
             .iter()
-            .map(|(d, m)| json!({ "period_id": d, "reason": m }))
+            .map(|s| json!({ "period_id": s.due, "reason": s.reason }))
             .collect::<Vec<_>>(),
     });
     if ctx.json {
         println!("{}", serde_json::to_string_pretty(&dto).expect("json"));
     } else if !ctx.quiet {
-        for item in &items {
-            println!(
-                "Saved {} → {} ({} bytes)",
-                item.get("period_id").and_then(|v| v.as_str()).unwrap_or(""),
-                item.get("path").and_then(|v| v.as_str()).unwrap_or(""),
-                item.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0),
-            );
+        for s in &saved {
+            println!("Saved {} → {} ({} bytes)", s.due, s.path, s.bytes);
         }
-        for (due, msg) in &skipped {
-            eprintln!("skipped {due}: {msg}");
+        for s in &skipped {
+            eprintln!("skipped {}: {}", s.due, s.reason);
         }
-        println!("{} bill(s), {bytes_total} bytes → {where_to}", items.len());
+        println!("{} bill(s), {bytes_total} bytes → {where_to}", saved.len());
     }
     Ok(())
-}
-
-/// Resolve one period's hosted URL, download the PDF, and return
-/// `(source_url, bytes)`. Returns [`AppError::NotFound`] if the archive
-/// serves a placeholder (see [`crate::client::Wipp::fetch_bill_pdf`]).
-fn fetch_period(ctx: &Ctx, id: &AccountId, due: &str) -> Result<(String, Vec<u8>), AppError> {
-    let url = ctx.api.bill_url(id, due)?;
-    let bytes = ctx.api.fetch_bill_pdf(&url, due)?;
-    Ok((url, bytes))
-}
-
-fn default_filename(id: &AccountId, due: &str) -> String {
-    format!("lrfl-bill-{}-{}.pdf", id.dashed(), due)
-}
-
-/// A file path as given; if the path is an existing directory, join the default
-/// filename into it; otherwise treat the argument as the exact file target.
-fn resolve_target(output: Option<&str>, default: &str) -> PathBuf {
-    match output {
-        None => PathBuf::from(default),
-        Some(s) => {
-            let p = Path::new(s);
-            if p.is_dir() {
-                p.join(default)
-            } else {
-                p.to_path_buf()
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{default_filename, resolve_target};
-    use crate::acct::AccountId;
-    use std::path::PathBuf;
-
-    #[test]
-    fn default_filename_includes_account_and_period() {
-        let id = AccountId::parse("1234567-8").unwrap();
-        assert_eq!(
-            default_filename(&id, "2026-05-13"),
-            "lrfl-bill-1234567-8-2026-05-13.pdf"
-        );
-    }
-
-    #[test]
-    fn resolve_target_uses_default_when_output_absent() {
-        assert_eq!(
-            resolve_target(None, "lrfl-bill-1234567-8-2026-05-13.pdf"),
-            PathBuf::from("lrfl-bill-1234567-8-2026-05-13.pdf")
-        );
-    }
-
-    #[test]
-    fn resolve_target_takes_explicit_file_verbatim() {
-        assert_eq!(
-            resolve_target(Some("/tmp/x.pdf"), "lrfl-bill-1234567-8-2026-05-13.pdf"),
-            PathBuf::from("/tmp/x.pdf")
-        );
-    }
-
-    #[test]
-    fn resolve_target_joins_filename_onto_directory() {
-        // `.` is a stable directory that always exists.
-        assert_eq!(
-            resolve_target(Some("."), "lrfl-bill-1234567-8-2026-05-13.pdf"),
-            PathBuf::from("./lrfl-bill-1234567-8-2026-05-13.pdf")
-        );
-    }
 }
