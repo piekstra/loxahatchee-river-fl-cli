@@ -1173,13 +1173,14 @@ dependencies = [
 
 [[package]]
 name = "loxahatchee-river-fl"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap",
  "clap_complete",
  "pdf-extract",
  "pk-cli-auth",
  "pk-cli-core",
+ "pk-cli-documents",
  "pk-cli-secrets",
  "pk-cli-selfupdate",
  "pk-cli-utility",
@@ -1410,8 +1411,8 @@ dependencies = [
 
 [[package]]
 name = "pk-cli-auth"
-version = "0.2.0"
-source = "git+https://github.com/piekstra/cli-common?tag=v0.2.0#230b70f46e765a69dcb78f44305c5186e6f85a16"
+version = "0.6.0"
+source = "git+https://github.com/piekstra/cli-common?tag=v0.6.0#f26ee90690ab06b2e551208e077f84d91a6a2e59"
 dependencies = [
  "clap",
  "pk-cli-core",
@@ -1422,8 +1423,8 @@ dependencies = [
 
 [[package]]
 name = "pk-cli-core"
-version = "0.2.0"
-source = "git+https://github.com/piekstra/cli-common?tag=v0.2.0#230b70f46e765a69dcb78f44305c5186e6f85a16"
+version = "0.6.0"
+source = "git+https://github.com/piekstra/cli-common?tag=v0.6.0#f26ee90690ab06b2e551208e077f84d91a6a2e59"
 dependencies = [
  "clap",
  "reqwest",
@@ -1432,9 +1433,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pk-cli-documents"
+version = "0.6.0"
+source = "git+https://github.com/piekstra/cli-common?tag=v0.6.0#f26ee90690ab06b2e551208e077f84d91a6a2e59"
+dependencies = [
+ "pk-cli-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pk-cli-secrets"
-version = "0.2.0"
-source = "git+https://github.com/piekstra/cli-common?tag=v0.2.0#230b70f46e765a69dcb78f44305c5186e6f85a16"
+version = "0.6.0"
+source = "git+https://github.com/piekstra/cli-common?tag=v0.6.0#f26ee90690ab06b2e551208e077f84d91a6a2e59"
 dependencies = [
  "clap",
  "keyring",
@@ -1445,8 +1456,8 @@ dependencies = [
 
 [[package]]
 name = "pk-cli-selfupdate"
-version = "0.2.0"
-source = "git+https://github.com/piekstra/cli-common?tag=v0.2.0#230b70f46e765a69dcb78f44305c5186e6f85a16"
+version = "0.6.0"
+source = "git+https://github.com/piekstra/cli-common?tag=v0.6.0#f26ee90690ab06b2e551208e077f84d91a6a2e59"
 dependencies = [
  "clap",
  "flate2",
@@ -1459,8 +1470,8 @@ dependencies = [
 
 [[package]]
 name = "pk-cli-utility"
-version = "0.2.0"
-source = "git+https://github.com/piekstra/cli-common?tag=v0.2.0#230b70f46e765a69dcb78f44305c5186e6f85a16"
+version = "0.6.0"
+source = "git+https://github.com/piekstra/cli-common?tag=v0.6.0#f26ee90690ab06b2e551208e077f84d91a6a2e59"
 dependencies = [
  "clap",
  "pk-cli-core",
@@ -1936,6 +1947,7 @@ version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",

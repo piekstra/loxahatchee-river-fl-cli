@@ -11,6 +11,7 @@ pub mod bills;
 pub mod completions;
 pub mod config;
 pub mod district;
+pub mod documents;
 pub mod history;
 pub mod pay;
 pub mod search;

@@ -216,19 +216,23 @@ fn download_all(ctx: &Ctx, account: &AccountArg, output: Option<&str>) -> Result
 /// Resolve one period's hosted URL, download the PDF, and return
 /// `(source_url, bytes)`. Returns [`AppError::NotFound`] if the archive
 /// serves a placeholder (see [`crate::client::Wipp::fetch_bill_pdf`]).
-fn fetch_period(ctx: &Ctx, id: &AccountId, due: &str) -> Result<(String, Vec<u8>), AppError> {
+pub(crate) fn fetch_period(
+    ctx: &Ctx,
+    id: &AccountId,
+    due: &str,
+) -> Result<(String, Vec<u8>), AppError> {
     let url = ctx.api.bill_url(id, due)?;
     let bytes = ctx.api.fetch_bill_pdf(&url, due)?;
     Ok((url, bytes))
 }
 
-fn default_filename(id: &AccountId, due: &str) -> String {
+pub(crate) fn default_filename(id: &AccountId, due: &str) -> String {
     format!("lrfl-bill-{}-{}.pdf", id.dashed(), due)
 }
 
 /// A file path as given; if the path is an existing directory, join the default
 /// filename into it; otherwise treat the argument as the exact file target.
-fn resolve_target(output: Option<&str>, default: &str) -> PathBuf {
+pub(crate) fn resolve_target(output: Option<&str>, default: &str) -> PathBuf {
     match output {
         None => PathBuf::from(default),
         Some(s) => {

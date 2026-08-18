@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- **`lrfl documents list`** and **`lrfl documents download <id>`** — the same
+  bill PDFs, exposed under cli-common's shared **`documents/v1`** profile so the
+  file surface is spelled identically across the CLI family. A document's id is
+  its ISO due date; `list` emits `document-list/v1` and `download` emits
+  `document-download/v1` (or `document-download-batch/v1` with `--all -o DIR`).
+  Reuses the `bills` fetch path — `bills get` stays as the utility-flavored
+  alias. `lrfl info` now advertises the `documents/v1` profile.
 - **`lrfl bills list`** and **`lrfl bills get <YYYY-MM-DD>`** — expose the
   historical bill surface (piekstra-cli/1's `bills list` + `bills get <id>`
   shape). `list` enumerates every discoverable period from the account payload

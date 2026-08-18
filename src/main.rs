@@ -34,6 +34,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
             save,
         } => commands::bill::run(&ctx, account, *open, save.as_deref()),
         Command::Bills { action } => commands::bills::run(&ctx, action),
+        Command::Documents { action } => commands::documents::run(&ctx, action),
         Command::Search {
             query,
             limit,
