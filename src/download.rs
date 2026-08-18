@@ -96,6 +96,17 @@ pub fn ensure_dir(dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// The batch DTO's `dir` label: `.` for the empty path (the current dir),
+/// otherwise the path as written. Pairs with [`ensure_dir`] so the "empty means
+/// current directory" convention lives in one place, not re-spelled per caller.
+pub fn dir_label(dir: &Path) -> String {
+    if dir.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        dir.display().to_string()
+    }
+}
+
 /// Fetch and write every `due` into `dir` (empty = current dir), collecting
 /// missing periods as [`Skipped`] rather than aborting so one gap doesn't kill
 /// the batch. `progress` is invoked with each due date before it is fetched, so

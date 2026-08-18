@@ -138,11 +138,7 @@ fn download_all(ctx: &Ctx, account: &AccountArg, output: Option<&str>) -> Result
         ctx.log(&format!("fetching bill {d}"))
     })?;
 
-    let where_to = if dir.as_os_str().is_empty() {
-        ".".to_string()
-    } else {
-        dir.display().to_string()
-    };
+    let where_to = download::dir_label(&dir);
     let bytes_total: u64 = saved.iter().map(|s| s.bytes).sum();
     let dto = json!({
         "schema": "bill-download-batch/v1",
