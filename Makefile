@@ -34,9 +34,13 @@ dev:
 # time. macOS scopes keychain "Always Allow" grants to that identity, so an
 # unsigned reinstall silently revokes them. Re-signing with the stable shared
 # identity keeps one grant valid across every future install.
+#
+# `--locked` builds from Cargo.lock. Without it `cargo install` ignores the
+# lockfile and resolves the newest semver-compatible crates, which are not the
+# versions the tests and `cargo audit` ran against.
 install: SIGN_TARGET = $${CARGO_INSTALL_ROOT:-$$HOME/.cargo}/bin/$(BIN)
 install:
-	cargo install --path . --force
+	cargo install --path . --locked --force
 	@$(SIGN)
 
 # Shared re-signing step. No-ops with a note when the helper or identity is

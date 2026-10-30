@@ -19,9 +19,9 @@ stable exit codes, so a person or a script can chain it into a pipeline.
 ## Install
 
 ```sh
-cargo build --release        # binary at ./target/release/lrfl
+cargo build --release            # binary at ./target/release/lrfl
 # or
-cargo install --path .       # installs the `lrfl` binary onto your PATH
+cargo install --path . --locked  # installs the `lrfl` binary onto your PATH
 ```
 
 Requires a recent stable Rust toolchain.
