@@ -55,8 +55,15 @@ cargo fmt --all
 - `src/version.rs` — `VERSION` + `build_info`. Tested.
 - `src/config.rs` — saved default-account + login-email files (not secrets).
 - `src/update.rs` — `self-update` via GitHub releases (`self_update` crate).
+- `src/mcp.rs` — `lrfl mcp`: `pk_cli_utility::mcp`'s shared tools over a `Portal` seam
+  (`LivePortal` on the WIPP API, fixtures in `src/mcp/tests.rs`). It uses only the
+  anonymous lookup and holds no password; an answer the district did not give is an
+  upstream error.
+- `packaging/mcpb/manifest.json` — the Claude Desktop extension; `tests/packaging.rs`
+  holds it to the binary.
 - `docs/wipp-api.md` — the discovered API (endpoints, shapes, gotchas). No PII.
-- `.github/workflows/release.yml` — tag `v*` → build binaries `self-update` fetches.
+- `.github/workflows/release.yml` — tag `v*` → build binaries `self-update` fetches and
+  the `.mcpb`, attached to the release.
 
 ## When chaining as an agent
 
@@ -106,8 +113,8 @@ cargo fmt --all
 ## The CLI family & cli-common
 
 This CLI conforms to **piekstra-cli/1** — the shared surface spec in
-[piekstra/cli-common](https://github.com/piekstra/cli-common) (`DESIGN.md`):
-standard `auth` / `config` / `self-update` / `completions` / `info` commands,
+[piekstra/cli-common](https://github.com/piekstra/cli-common) (`DESIGN.md`),
+pinned at **v0.21.0**: standard `auth` / `config` / `self-update` / `completions` / `info` commands,
 global `--json`, canonical DTOs (`auth-status/v1`, `self-update/v1`,
 `cli-info/v1`), and frozen exit codes 0–6.
 

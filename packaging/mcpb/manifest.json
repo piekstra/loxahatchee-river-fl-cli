@@ -1,0 +1,94 @@
+{
+  "manifest_version": "0.3",
+  "name": "lrfl",
+  "display_name": "Loxahatchee River District (lrfl)",
+  "version": "0.8.0",
+  "description": "Read-only access to your own Loxahatchee River District balance, bills, payments and metered use, through the open-source lrfl CLI.",
+  "long_description": "Ask Claude about your Loxahatchee River District account: what you owe and when it is due, what recent bills came to and whether they are paid, which payments were recorded, and your metered use. Four read-only tools, loxahatchee_balance, loxahatchee_bills, loxahatchee_payments and loxahatchee_usage; nothing can make a payment or change your account. It reads the account number you enter here through the district's anonymous lookup, so it asks for no password and holds none. What the tools return (balance, bills, payments, usage, account number) goes to Claude as part of your conversation. Unofficial; not affiliated with the Loxahatchee River District.",
+  "author": {
+    "name": "piekstra",
+    "url": "https://github.com/piekstra"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/piekstra/loxahatchee-river-fl-cli"
+  },
+  "homepage": "https://github.com/piekstra/loxahatchee-river-fl-cli",
+  "documentation": "https://github.com/piekstra/loxahatchee-river-fl-cli#use-with-claude",
+  "support": "https://github.com/piekstra/loxahatchee-river-fl-cli/issues",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "loxahatchee",
+    "sewer",
+    "utility",
+    "bills",
+    "read-only"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/lrfl",
+    "mcp_config": {
+      "command": "${__dirname}/server/lrfl",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "LRFL_ACCOUNT": "${user_config.account}"
+      },
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/server/lrfl.exe",
+          "args": [
+            "mcp"
+          ],
+          "env": {
+            "LRFL_ACCOUNT": "${user_config.account}"
+          }
+        },
+        "linux": {
+          "command": "${__dirname}/server/linux/lrfl",
+          "args": [
+            "mcp"
+          ],
+          "env": {
+            "LRFL_ACCOUNT": "${user_config.account}"
+          }
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "loxahatchee_balance",
+      "description": "What you owe the district now and when it is due."
+    },
+    {
+      "name": "loxahatchee_bills",
+      "description": "The current bill and up to three before it, with whether each is paid."
+    },
+    {
+      "name": "loxahatchee_payments",
+      "description": "Payments the district has recorded, newest first."
+    },
+    {
+      "name": "loxahatchee_usage",
+      "description": "Metered use by reading, where the service has a meter."
+    }
+  ],
+  "tools_generated": false,
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ]
+  },
+  "user_config": {
+    "account": {
+      "type": "string",
+      "title": "Account number",
+      "description": "Your account number, NNNNNNN-N, as printed on your bill.",
+      "required": true
+    }
+  }
+}

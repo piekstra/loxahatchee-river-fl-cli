@@ -2,6 +2,8 @@
 
 use pk_cli_auth::{AuthMethod, AuthStatus};
 
+use crate::auth::session::ENV_PASSWORD;
+use crate::auth::Session;
 use crate::cli::AuthCmd;
 use crate::commands::Ctx;
 use crate::error::AppError;
@@ -56,6 +58,7 @@ pub fn info(ctx: &Ctx) -> Result<(), AppError> {
             "district",
             "accounts",
             "documents",
+            "mcp",
         ],
     )
     .with_profiles(&[pk_cli_utility::PROFILE, pk_cli_documents::PROFILE]);
@@ -76,6 +79,12 @@ pub fn login(ctx: &Ctx) -> Result<(), AppError> {
     }
     ctx.log(&format!("authenticating {login}…"));
     ctx.session.login(&ctx.api, &login, &password)?;
+    if Session::env_overrides(&password) {
+        eprintln!(
+            "warning: ${ENV_PASSWORD} is set to a different password and comes before the \
+             keychain, so commands will keep using it until you change or unset it"
+        );
+    }
     if ctx.json {
         println!(
             "{}",

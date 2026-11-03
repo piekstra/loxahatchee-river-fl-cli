@@ -1,0 +1,36 @@
+{
+  "id": "1234567 0",
+  "billToName": "EXAMPLE OWNER",
+  "serviceLoc": "100 EXAMPLE STREET",
+  "propertyLoc": "100 EXAMPLE STREET",
+  "chargeTypes": {
+    "Sewer ": {
+      "totPrnBal": 12.34,
+      "totIntDue": 0.5,
+      "futurePrnBal": 0,
+      "currDueDate": "2026-08-01",
+      "lastDatePaid": "2026-05-20",
+      "billedYtd": 46.68,
+      "currPrdBilled": 12.34,
+      "currPrdPrnBal": 12.34,
+      "currPrdInt": 0.5,
+      "currUsage": 11,
+      "currRdg": 111,
+      "currRdgDate": "2026-07-01",
+      "currPrdStartDate": "2026-04-01",
+      "currPrdEndDate": "2026-06-30",
+      "priorDueDate1": "2026-05-01",
+      "priorPrdBilled1": 23.45,
+      "priorPrdPrnBal1": 0,
+      "priorPrdInt1": 0,
+      "priorUsage1": 22,
+      "priorRdg1": 100,
+      "priorRdgDate1": "2026-04-01",
+      "priorDueDate2": "2026-02-01",
+      "priorPrdBilled2": 34.56,
+      "priorPrdPrnBal2": 0,
+      "priorPrdInt2": 0,
+      "priorDueDate3": "1000-01-01"
+    }
+  }
+}

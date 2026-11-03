@@ -199,6 +199,9 @@ pub enum Command {
     /// Machine-readable capability discovery (cli-info/v1).
     Info,
 
+    /// Serve read-only tools to Claude over MCP.
+    Mcp(pk_cli_mcp::McpArgs),
+
     /// Print a shell completion script (e.g. `lrfl completions zsh`).
     Completions {
         /// Shell to generate completions for.

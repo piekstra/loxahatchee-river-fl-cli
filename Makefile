@@ -2,7 +2,7 @@
 
 BIN := lrfl
 
-.PHONY: build test lint fmt fmt-check check dev install
+.PHONY: build test lint fmt fmt-check check smoke verify dev install
 
 build: SIGN_TARGET = target/release/$(BIN)
 build:
@@ -22,6 +22,16 @@ fmt-check:
 	cargo fmt --all -- --check
 
 check: fmt-check lint test
+
+smoke:
+	cargo build --release
+	./target/release/$(BIN) --version
+	./target/release/$(BIN) --help >/dev/null
+	./target/release/$(BIN) mcp --list-tools >/dev/null
+	@echo "smoke ok"
+
+verify: fmt-check lint test smoke
+	@echo "verify ok"
 
 # Debug build re-signed with the stable pk-cli-codesign identity so macOS
 # keychain "Always Allow" grants survive rebuilds (see cli-common/scripts).

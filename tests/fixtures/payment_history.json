@@ -1,0 +1,4 @@
+[
+  { "transactionId": "CONF0001", "amt": 23.45, "paymentDate": "2026-05-20", "postTime": "12:00:00", "paymentMethodCode": "EFT", "accountType": "UTILITY" },
+  { "transactionId": "CONF0002", "amt": 34.56, "paymentDate": "2026-06-20", "postTime": "12:00:00", "paymentMethodCode": "CARD", "accountType": "UTILITY" }
+]

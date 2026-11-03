@@ -16,6 +16,7 @@ pub mod config;
 pub mod download;
 pub mod error;
 pub mod formatter;
+pub mod mcp;
 pub mod model;
 pub mod update;
 pub mod util;
