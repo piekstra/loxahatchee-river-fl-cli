@@ -18,6 +18,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
+use pk_cli_core::transport::{require_secure_url, secure_redirects};
 use serde_json::Value;
 
 use crate::acct::AccountId;
@@ -47,6 +48,13 @@ const POLL_BUDGET: Duration = Duration::from_secs(20);
 /// Delay between poll attempts.
 const POLL_INTERVAL: Duration = Duration::from_millis(700);
 
+/// Refuse a bill document URL off `https`. The portal supplies it, it holds the
+/// account's document path, and the jar's cookies can go with it, so a response
+/// that names plain `http` is the provider misbehaving: exit 5, not a usage error.
+pub fn require_secure_document_url(url: &str) -> Result<(), AppError> {
+    require_secure_url(url).map_err(|e| AppError::Upstream(e.to_string()))
+}
+
 /// Client bound to a single tenant (`wipp_id`).
 pub struct Wipp {
     client: reqwest::blocking::Client,
@@ -60,6 +68,7 @@ impl Wipp {
             .timeout(Duration::from_secs(25))
             // The FIS login exchanges a session cookie (hop 1) for a JWT (hop 2).
             .cookie_store(true)
+            .redirect(secure_redirects())
             .build()
             .map_err(|e| AppError::Other(format!("failed to build HTTP client: {e}")))?;
         Ok(Self { client, wipp_id })
@@ -194,6 +203,7 @@ impl Wipp {
     /// the [`looks_like_real_pdf`] check, this returns [`AppError::NotFound`]
     /// so the CLI can tell the user the period isn't retained upstream.
     pub fn fetch_bill_pdf(&self, url: &str, due_date: &str) -> Result<Vec<u8>, AppError> {
+        require_secure_document_url(url)?;
         let resp = self.client.get(url).send()?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
@@ -227,6 +237,7 @@ impl Wipp {
     /// is trusted (e.g. the current bill via [`Wipp::bill_url`], which the
     /// portal itself calls without a PDF-shape check).
     pub fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>, AppError> {
+        require_secure_document_url(url)?;
         let resp = self.client.get(url).send()?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
@@ -464,7 +475,24 @@ fn looks_like_real_pdf(bytes: &[u8], content_type: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::looks_like_real_pdf;
+    use super::{looks_like_real_pdf, Wipp};
+
+    /// The portal names the document URL, so a response naming plain http must
+    /// not be fetched. This host resolves nowhere, and `only https` is the guard's
+    /// wording, so a network failure can't pass for the refusal.
+    #[test]
+    fn a_document_url_off_https_is_refused_before_anything_is_sent() {
+        let api = Wipp::new("LOXA".into()).unwrap();
+        let url = "http://docs.example.invalid/bill?account=1234567";
+        for err in [
+            api.fetch_bytes(url).unwrap_err(),
+            api.fetch_bill_pdf(url, "2026-01-01").unwrap_err(),
+        ] {
+            assert_eq!(err.exit_code(), 5, "{err}");
+            assert!(err.to_string().contains("only https"), "{err}");
+            assert!(!err.to_string().contains("1234567"), "{err}");
+        }
+    }
 
     /// The happy path: real PDF bytes, correct `application/pdf` type.
     #[test]

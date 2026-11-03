@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.1 — 2026-11-03
+
+### Security
+- A bill document URL the portal returns must be `https`, or `http` only to this machine,
+  before it is fetched or opened (exit 5). A plain `http` URL would have sent the
+  document path and any matching cookies in the clear, and the bill PDF back the same way.
+- A redirect that leaves `https` is now an error rather than followed.
+- A network failure's message names the host, not the whole URL.
+
+### Changed
+- cli-common v0.24.0, up from v0.21.0.
+
 ## v0.8.0 — 2026-11-03
 
 ### Added
