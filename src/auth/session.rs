@@ -16,7 +16,7 @@ use crate::client::Wipp;
 use crate::config;
 use crate::error::AppError;
 
-use super::secrets::{CredentialStore, Secret};
+use super::secrets::{CredentialStore, Secret, SourceKind};
 
 /// Keychain service name (reverse-DNS).
 pub const SERVICE: &str = "com.piekstra.loxahatchee-river-fl";
@@ -74,6 +74,12 @@ impl Session {
         Ok(())
     }
 
+    /// Whether `$LRFL_PASSWORD` is set to something other than `stored`, so that
+    /// commands will keep using the variable and not what was just stored.
+    pub fn env_overrides(stored: &Secret) -> bool {
+        env_differs(std::env::var(ENV_PASSWORD).ok().as_deref(), stored)
+    }
+
     /// Remove the stored session for `login`. Returns whether anything was
     /// removed from the keychain.
     pub fn logout(&self, login: &str) -> Result<bool, AppError> {
@@ -97,15 +103,36 @@ impl Session {
                 .unwrap_or(false)
     }
 
-    /// The password for `login`: `$LRFL_PASSWORD`, then the keychain.
-    pub fn password(&self, login: &str) -> Result<Secret, AppError> {
-        crate::auth::secrets::resolve(&self.store, login, ENV_PASSWORD)
-    }
-
     /// Mint a fresh `id_token` for `login` by performing the FIS login with the
-    /// stored password.
+    /// stored password. A refusal of a password from `$LRFL_PASSWORD` says so:
+    /// `lrfl auth login` would store one the variable keeps overriding.
     pub fn access_token(&self, api: &Wipp, login: &str) -> Result<String, AppError> {
-        let password = self.password(login)?;
-        api.fis_login(login, password.expose())
+        let password = crate::auth::secrets::resolve(&self.store, login, ENV_PASSWORD)?;
+        api.fis_login(login, password.secret.expose())
+            .map_err(|e| match (e, password.source) {
+                (AppError::Auth(message), SourceKind::Env) => AppError::Auth(format!(
+                    "{message} (the password came from ${ENV_PASSWORD}, which comes before the \
+                     keychain)"
+                )),
+                (e, _) => e,
+            })
+    }
+}
+
+fn env_differs(env: Option<&str>, stored: &Secret) -> bool {
+    env.is_some_and(|value| value != stored.expose())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_different_variable_overrides_what_was_stored() {
+        let stored = Secret::new("stored");
+        assert!(env_differs(Some("old"), &stored));
+        assert!(env_differs(Some(""), &stored));
+        assert!(!env_differs(Some("stored"), &stored));
+        assert!(!env_differs(None, &stored));
     }
 }

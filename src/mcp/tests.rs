@@ -2,7 +2,7 @@
 //! mapped by the commands' own mappers, checked by cli-common's conformance
 //! helper. `tests/mcp_stdio.rs` and `tests/mcp_http.rs` drive the real binary.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use pk_cli_mcp::conformance::{assert_conforms, assert_fits, call, definitions_size};
@@ -15,19 +15,8 @@ fn fixture(raw: &str) -> Value {
     serde_json::from_str(raw).expect("fixture parses")
 }
 
-fn linked(ids: &[&str]) -> Vec<LinkedAccount> {
-    ids.iter()
-        .map(|id| LinkedAccount {
-            account_id: (*id).to_string(),
-            account_type: "utility".into(),
-            balance_due: None,
-        })
-        .collect()
-}
-
 struct Fixtures {
     default_account: Option<String>,
-    login: Result<Option<Vec<LinkedAccount>>, AppError>,
     record: Value,
     payments: Value,
     /// Every read, with its account.
@@ -38,7 +27,6 @@ impl Fixtures {
     fn new() -> Self {
         Self {
             default_account: Some("1234567-0".into()),
-            login: Ok(None),
             record: fixture(include_str!("../../tests/fixtures/utility_account.json")),
             payments: fixture(include_str!("../../tests/fixtures/payment_history.json")),
             calls: Rc::default(),
@@ -52,13 +40,6 @@ impl Fixtures {
         }
     }
 
-    fn signed_in(ids: &[&str]) -> Self {
-        Self {
-            login: Ok(Some(linked(ids))),
-            ..Self::guest()
-        }
-    }
-
     fn log(&self, what: String) {
         self.calls.borrow_mut().push(what);
     }
@@ -67,14 +48,6 @@ impl Fixtures {
 impl Portal for Fixtures {
     fn default_account(&self) -> Option<String> {
         self.default_account.clone()
-    }
-
-    fn linked_accounts(&self) -> Result<Option<Vec<LinkedAccount>>, AppError> {
-        self.log("linked".into());
-        match &self.login {
-            Ok(list) => Ok(list.clone()),
-            Err(e) => Err(AppError::Auth(e.to_string())),
-        }
     }
 
     fn utility_account(&self, id: &AccountId) -> Result<Value, AppError> {
@@ -89,7 +62,7 @@ impl Portal for Fixtures {
 }
 
 fn tools_over(portal: Fixtures) -> UtilityTools<LoxSource<Fixtures>> {
-    with_source(LoxSource { portal }, false)
+    with_source(LoxSource { portal })
 }
 
 fn ok(t: &UtilityTools<LoxSource<Fixtures>>, tool: &str, args: Value) -> Value {
@@ -141,21 +114,17 @@ fn balance_adds_principal_and_interest_and_shows_only_the_end_of_the_number() {
 }
 
 #[test]
-fn a_default_account_reads_no_login() {
+fn a_named_account_wins_over_the_default() {
     let portal = Fixtures::new();
     let calls = portal.calls.clone();
     let t = tools_over(portal);
     ok(&t, "loxahatchee_balance", json!({}));
     ok(&t, "loxahatchee_bills", json!({"account": "7654321-0"}));
-    assert_eq!(
-        *calls.borrow(),
-        ["account 1234567-0", "account 7654321-0"],
-        "the keychain is one sign-in away from any of these"
-    );
+    assert_eq!(*calls.borrow(), ["account 1234567-0", "account 7654321-0"]);
 }
 
 #[test]
-fn a_guest_names_any_account_and_is_told_how_when_it_names_none() {
+fn with_no_default_a_call_names_any_account_and_is_told_how_when_it_names_none() {
     let portal = Fixtures::guest();
     let calls = portal.calls.clone();
     let t = tools_over(portal);
@@ -169,31 +138,11 @@ fn a_guest_names_any_account_and_is_told_how_when_it_names_none() {
 }
 
 #[test]
-fn a_login_with_one_account_needs_no_naming_and_several_are_listed() {
-    let portal = Fixtures::signed_in(&["1234567-0"]);
-    let t = tools_over(portal);
-    assert_eq!(ok(&t, "loxahatchee_bills", json!({}))["returned"], 3);
-
-    let t = tools_over(Fixtures::signed_in(&["1234567-0", "2345678-0"]));
-    let result = call(&t, "loxahatchee_bills", json!({}));
-    assert!(result.text().starts_with("usage:"), "{}", result.text());
-    assert!(result.text().contains("2 accounts"), "{}", result.text());
-    let out = ok(&t, "loxahatchee_bills", json!({"account": "2345678-0"}));
-    assert_eq!(out["returned"], 3);
-}
-
-#[test]
-fn a_failed_sign_in_costs_a_named_account_nothing_and_is_reported_with_none_named() {
-    let refused = || Err(AppError::Auth("login failed".into()));
-    let t = tools_over(Fixtures {
-        login: refused(),
-        ..Fixtures::guest()
-    });
-    let out = ok(&t, "loxahatchee_balance", json!({"account": "7654321-0"}));
-    assert_eq!(out["balance"], "12.84");
-
-    let result = call(&t, "loxahatchee_balance", json!({}));
-    assert!(result.text().starts_with("auth:"), "{}", result.text());
+fn the_instructions_send_nobody_to_a_sign_in() {
+    let t = tools_over(Fixtures::new());
+    let text = pk_cli_mcp::instructions(&t);
+    assert!(text.contains("anonymous account lookup"), "{text}");
+    assert!(!text.contains("auth login"), "{text}");
 }
 
 #[test]
@@ -319,149 +268,6 @@ fn a_malformed_account_number_is_a_usage_error() {
     let t = tools_over(Fixtures::guest());
     let result = call(&t, "loxahatchee_balance", json!({"account": "1234567"}));
     assert!(result.text().starts_with("usage:"), "{}", result.text());
-}
-
-#[test]
-fn a_password_in_the_environment_points_at_where_it_is_set() {
-    let refused = || Err(AppError::Auth("login failed".into()));
-    let source = |portal| LoxSource { portal };
-    let portal = Fixtures {
-        login: refused(),
-        ..Fixtures::guest()
-    };
-    let text = call(
-        &with_source(source(portal), true),
-        "loxahatchee_bills",
-        json!({}),
-    )
-    .text()
-    .to_string();
-    assert!(text.contains("$LRFL_PASSWORD"), "{text}");
-    assert!(!text.contains("lrfl auth login"), "{text}");
-
-    let portal = Fixtures {
-        login: refused(),
-        ..Fixtures::guest()
-    };
-    let text = call(
-        &with_source(source(portal), false),
-        "loxahatchee_bills",
-        json!({}),
-    )
-    .text()
-    .to_string();
-    assert!(text.contains("`lrfl auth login`"), "{text}");
-}
-
-mod sign_in {
-    use super::*;
-
-    /// A fetch that counts its calls and answers as told.
-    fn fetch_with<'a>(
-        calls: &'a Cell<u32>,
-        answer: impl Fn() -> Result<Vec<LinkedAccount>, AppError> + 'a,
-    ) -> impl Fn(&Secret) -> Result<Vec<LinkedAccount>, AppError> + 'a {
-        move |_| {
-            calls.set(calls.get() + 1);
-            answer()
-        }
-    }
-
-    fn stored(value: &'static str) -> impl Fn() -> Result<Secret, AppError> {
-        move || Ok(Secret::new(value))
-    }
-
-    fn refuse() -> Result<Vec<LinkedAccount>, AppError> {
-        Err(AppError::Auth("login failed".into()))
-    }
-
-    fn one() -> Result<Vec<LinkedAccount>, AppError> {
-        Ok(linked(&["1234567-0"]))
-    }
-
-    #[test]
-    fn a_refused_password_is_not_sent_again_and_a_different_one_is() {
-        let calls = Cell::new(0);
-        let now = Instant::now();
-        let mut state = Linked::default();
-        let fetch = fetch_with(&calls, refuse);
-        assert!(state.read("user", now, stored("old"), &fetch).is_err());
-        let again = state.read("user", now, stored("old"), &fetch).unwrap_err();
-        assert_eq!(calls.get(), 1, "the refused password went out again");
-        assert!(again.to_string().contains("not sent again"), "{again}");
-
-        let fetch = fetch_with(&calls, one);
-        assert_eq!(
-            state
-                .read("user", now, stored("new"), &fetch)
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(calls.get(), 2);
-    }
-
-    #[test]
-    fn the_same_password_under_a_new_login_is_sent_once() {
-        let calls = Cell::new(0);
-        let now = Instant::now();
-        let mut state = Linked::default();
-        let fetch = fetch_with(&calls, refuse);
-        assert!(state.read("mistyped", now, stored("p"), &fetch).is_err());
-        assert!(state.read("mistyped", now, stored("p"), &fetch).is_err());
-        assert_eq!(calls.get(), 1);
-
-        let fetch = fetch_with(&calls, one);
-        assert!(state.read("right", now, stored("p"), &fetch).is_ok());
-        assert_eq!(calls.get(), 2);
-    }
-
-    #[test]
-    fn the_district_being_down_is_not_a_refusal() {
-        let calls = Cell::new(0);
-        let now = Instant::now();
-        let mut state = Linked::default();
-        let fetch = fetch_with(&calls, || Err(AppError::Upstream("HTTP 503".into())));
-        assert!(state.read("user", now, stored("p"), &fetch).is_err());
-        assert!(state.read("user", now, stored("p"), &fetch).is_err());
-        assert_eq!(calls.get(), 2, "an outage must not stop the next try");
-    }
-
-    #[test]
-    fn the_list_is_kept_for_its_login_for_an_hour() {
-        let calls = Cell::new(0);
-        let now = Instant::now();
-        let mut state = Linked::default();
-        let fetch = fetch_with(&calls, one);
-        let unread = || -> Result<Secret, AppError> { panic!("the keychain was read") };
-        state.read("user", now, stored("p"), &fetch).unwrap();
-        state.read("user", now, unread, &fetch).unwrap();
-        let before_the_hour = now + KEEP_LINKED - Duration::from_secs(1);
-        state.read("user", before_the_hour, unread, &fetch).unwrap();
-        assert_eq!(calls.get(), 1);
-
-        state
-            .read("user", now + KEEP_LINKED, stored("p"), &fetch)
-            .unwrap();
-        assert_eq!(calls.get(), 2);
-
-        state
-            .read("other", now + KEEP_LINKED, stored("p"), &fetch)
-            .unwrap();
-        assert_eq!(calls.get(), 3);
-    }
-
-    #[test]
-    fn a_token_turned_away_after_a_good_login_is_not_a_refusal() {
-        assert!(matches!(
-            not_a_refusal(AppError::Auth("session expired".into())),
-            AppError::Upstream(_)
-        ));
-        assert!(matches!(
-            not_a_refusal(AppError::NotFound("gone".into())),
-            AppError::NotFound(_)
-        ));
-    }
 }
 
 /// Every identity-bearing value in the fixtures is a placeholder.

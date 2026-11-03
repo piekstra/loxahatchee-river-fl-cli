@@ -334,7 +334,10 @@ impl Wipp {
                 .send()?,
         )?;
         if s1 != 200 {
-            return Err(login_failure(s1, &b1));
+            return Err(AppError::Auth(format!(
+                "login failed: {}",
+                fis_error(s1, &b1)
+            )));
         }
 
         // Hop 2: exchange the session for an OpenID id_token.
@@ -348,9 +351,8 @@ impl Wipp {
                 .header("Accept", "application/json, text/plain, */*")
                 .send()?,
         )?;
-        // Hop 1 accepted the credentials, so nothing from here on is about them.
         if s2 != 200 {
-            return Err(AppError::Upstream(format!(
+            return Err(AppError::Auth(format!(
                 "login token exchange failed: {}",
                 fis_error(s2, &b2)
             )));
@@ -359,9 +361,7 @@ impl Wipp {
             .and_then(Value::as_str)
             .filter(|t| !t.is_empty())
             .map(str::to_string)
-            .ok_or_else(|| {
-                AppError::Upstream("login succeeded but no id_token was returned".into())
-            })
+            .ok_or_else(|| AppError::Auth("login succeeded but no id_token was returned".into()))
     }
 
     /// Utility accounts linked to the logged-in user.
@@ -393,20 +393,6 @@ impl Wipp {
 /// Turn a failed FIS login response into a friendly message. FIS surfaces some
 /// states as `CCnnnn` error codes; a 401/500 on hop 1 is almost always a wrong
 /// login name or password.
-/// A refused hop 1. FIS rejects wrong credentials with a 400, occasionally a 401
-/// or 500 (docs/wipp-api.md), and names an expired or temporary password by its
-/// code. Anything else (a 403 from the edge, a 429, a gateway's 502 to 504) says
-/// nothing about the credentials.
-fn login_failure(status: u16, body: &Value) -> AppError {
-    let code = body.get("errorCode").and_then(Value::as_str).unwrap_or("");
-    let message = format!("login failed: {}", fis_error(status, body));
-    if matches!(status, 400 | 401 | 500) || matches!(code, "CC0206" | "CC0219") {
-        AppError::Auth(message)
-    } else {
-        AppError::Upstream(message)
-    }
-}
-
 fn fis_error(status: u16, body: &Value) -> String {
     let code = body.get("errorCode").and_then(Value::as_str).unwrap_or("");
     match code {
@@ -478,27 +464,7 @@ fn looks_like_real_pdf(bytes: &[u8], content_type: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{login_failure, looks_like_real_pdf};
-    use crate::error::AppError;
-
-    #[test]
-    fn only_what_fis_uses_for_wrong_credentials_is_an_auth_error() {
-        let body = serde_json::json!({});
-        for status in [400, 401, 500] {
-            assert!(
-                matches!(login_failure(status, &body), AppError::Auth(_)),
-                "{status}"
-            );
-        }
-        for status in [403, 404, 429, 502, 503, 504] {
-            assert!(
-                matches!(login_failure(status, &body), AppError::Upstream(_)),
-                "{status}"
-            );
-        }
-        let expired = serde_json::json!({"errorCode": "CC0206"});
-        assert!(matches!(login_failure(403, &expired), AppError::Auth(_)));
-    }
+    use super::looks_like_real_pdf;
 
     /// The happy path: real PDF bytes, correct `application/pdf` type.
     #[test]

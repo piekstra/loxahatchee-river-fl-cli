@@ -47,10 +47,10 @@
 
 ### Changed
 - `$LRFL_PASSWORD` now comes before the keychain, the family's order, so a variable set
-  for one run costs no keychain prompt. Set but empty, it is now an error naming it.
-- Sign-in: a 403, 429 or gateway error from FIS's login, and any failure after it
-  accepted the credentials, is now exit 5 rather than exit 3, since it says nothing
-  about them.
+  for one run costs no keychain prompt. **On upgrade:** a variable left over from an old
+  setup, which the keychain used to shadow, now wins, so unset it. `lrfl auth login` warns
+  when it differs from the password just stored, and a refused password from the variable
+  says so. Set but empty, it is now an error naming it.
 - `bills list --json`: a statement for several services on one due date now carries
   their total, not the first service's amount.
 - cli-common v0.21.0, up from v0.7.0. Rust 1.89 or later.

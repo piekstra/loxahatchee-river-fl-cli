@@ -56,8 +56,9 @@ cargo fmt --all
 - `src/config.rs` — saved default-account + login-email files (not secrets).
 - `src/update.rs` — `self-update` via GitHub releases (`self_update` crate).
 - `src/mcp.rs` — `lrfl mcp`: `pk_cli_utility::mcp`'s shared tools over a `Portal` seam
-  (`LivePortal` on the WIPP API, fixtures in `src/mcp/tests.rs`). It reads credentials
-  and never writes one; an answer the district did not give is an upstream error.
+  (`LivePortal` on the WIPP API, fixtures in `src/mcp/tests.rs`). It uses only the
+  anonymous lookup and holds no password; an answer the district did not give is an
+  upstream error.
 - `packaging/mcpb/manifest.json` — the Claude Desktop extension; `tests/packaging.rs`
   holds it to the binary.
 - `docs/wipp-api.md` — the discovered API (endpoints, shapes, gotchas). No PII.

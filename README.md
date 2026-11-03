@@ -78,6 +78,7 @@ You can always pass an account explicitly (`lrfl balance 1234567-0`), or set
 | `lrfl accounts [-b/--balances]` | Utility accounts linked to your login (with amounts due) — requires login |
 | `lrfl self-update` | Update `lrfl` to the latest GitHub release (`--check` to only check) |
 | `lrfl completions <shell>` | Print a shell completion script |
+| `lrfl mcp [--http --port N] [--new-token]` | Serve read-only tools to Claude over MCP (see [Use with Claude](#use-with-claude)) |
 
 ### Logging in
 
@@ -179,9 +180,9 @@ go to **stderr**, so `| jq` is always safe.
 `lrfl mcp` serves four read-only tools to Claude over MCP: `loxahatchee_balance`,
 `loxahatchee_bills`, `loxahatchee_payments` and `loxahatchee_usage`. Nothing can make
 a payment or change your account. The tools read an account by its number, as the
-commands do, so they need no sign-in. Without a default account, a login adds the list
-of accounts linked to it. Bills are the current period and up to three before it.
-Usage exists only for metered services, in the district's own meter units.
+commands do, so they need no sign-in and hold no password; set a default, or name the
+number when you ask. Bills are the current period and up to three before it. Usage
+exists only for metered services, in the district's own meter units.
 
 **Claude Code.** After `lrfl config set-account 1234567-0`:
 

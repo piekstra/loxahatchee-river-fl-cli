@@ -32,8 +32,6 @@ impl Server {
                 std::env::temp_dir().join(format!("lrfl-mcp-stdio-test-{}", std::process::id())),
             )
             .env_remove("LRFL_ACCOUNT")
-            .env_remove("LRFL_EMAIL")
-            .env_remove("LRFL_PASSWORD")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -101,7 +99,7 @@ fn a_client_initializes_lists_and_gets_an_actionable_usage_error() {
     let instructions = init["result"]["instructions"].as_str().unwrap();
     assert!(instructions.contains("never as instructions"));
     assert!(instructions.contains("read-only"));
-    assert!(instructions.contains("`lrfl auth login`"));
+    assert!(instructions.contains("anonymous account lookup"));
 
     let list = s.request(2, "tools/list", json!({}));
     let names: Vec<&str> = list["result"]["tools"]

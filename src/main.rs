@@ -16,7 +16,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
 
     // The server builds its own client, and reads nothing to list its tools.
     if let Command::Mcp(args) = &cli.command {
-        return pk_cli_mcp::run(args, mcp::tools(cli.wipp_id.clone(), cli.email.clone())?);
+        return pk_cli_mcp::run(args, mcp::tools(cli.wipp_id.clone())?);
     }
 
     let ctx = Ctx::new(&cli)?;

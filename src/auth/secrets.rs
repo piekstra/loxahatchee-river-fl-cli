@@ -2,7 +2,7 @@
 //! secret this tool stores is the portal **password** (the durable credential
 //! in the FIS cookie-session model), set at `lrfl auth login`.
 
-pub use pk_cli_secrets::{CredentialStore, Secret};
+pub use pk_cli_secrets::{CredentialStore, Resolved, Secret, SourceKind};
 
 use pk_cli_secrets::{KeychainRead, SecretResolver, SecretSpec};
 
@@ -15,18 +15,15 @@ pub fn resolve(
     store: &impl KeychainRead,
     account: &str,
     env_var: &str,
-) -> Result<Secret, AppError> {
+) -> Result<Resolved, AppError> {
     let spec = SecretSpec::new(account)
         .env(env_var)
         .remedy("`lrfl auth login`");
-    SecretResolver::new(store)
-        .resolve(&spec)?
-        .map(|resolved| resolved.secret)
-        .ok_or_else(|| {
-            AppError::Auth(format!(
-                "not logged in for {account:?} — run `lrfl auth login` or set ${env_var}"
-            ))
-        })
+    SecretResolver::new(store).resolve(&spec)?.ok_or_else(|| {
+        AppError::Auth(format!(
+            "not logged in for {account:?} — run `lrfl auth login` or set ${env_var}"
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -70,7 +67,9 @@ mod tests {
         const VAR: &str = "LRFL_TEST_PASSWORD_SET";
         std::env::set_var(VAR, "from-env");
         let store = Stub::holding(Some("stored"));
-        assert_eq!(resolve(&store, "user", VAR).unwrap().expose(), "from-env");
+        let resolved = resolve(&store, "user", VAR).unwrap();
+        assert_eq!(resolved.secret.expose(), "from-env");
+        assert_eq!(resolved.source, SourceKind::Env);
         assert_eq!(store.reads.get(), 0);
     }
 
@@ -88,7 +87,9 @@ mod tests {
     fn an_unset_variable_falls_to_the_keychain_and_nothing_stored_says_so() {
         const VAR: &str = "LRFL_TEST_PASSWORD_UNSET";
         let store = Stub::holding(Some("stored"));
-        assert_eq!(resolve(&store, "user", VAR).unwrap().expose(), "stored");
+        let resolved = resolve(&store, "user", VAR).unwrap();
+        assert_eq!(resolved.secret.expose(), "stored");
+        assert_eq!(resolved.source, SourceKind::Keychain);
         let err = resolve(&Stub::holding(None), "user", VAR).err().unwrap();
         assert!(matches!(err, AppError::Auth(_)), "{err:?}");
     }

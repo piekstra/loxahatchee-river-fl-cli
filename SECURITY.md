@@ -39,44 +39,34 @@ stdio; the server opens no port unless run with `--http` (below). **What the too
 return goes to Claude on every path**, as part of your conversation: your balance, due
 date, bills, payments, metered use and account number.
 
-The tools read an account by its number through the district's anonymous lookup. A
-server with a default account (`$LRFL_ACCOUNT` or `lrfl config set-account`), or with
-no login configured, reads no keychain item and sends no password. Only a server with
-a login and no default account signs in, for the list of accounts linked to that login,
-which it keeps for an hour. It takes the password from `$LRFL_PASSWORD`, then the
-keychain item under `com.piekstra.loxahatchee-river-fl`. A tool never prompts and never
-creates or changes a keychain item, and a missing or rejected password is an error
-asking the user to run `lrfl auth login` in a terminal, or to update the variable while
-it is set. A password FIS has refused is not sent again by a running server, so a stale
-one cannot lock the login; the next call that finds a different password tries that.
-Starting the server again sends it once more.
+The tools read an account by its number through the district's anonymous lookup, so
+the server signs in nowhere, reads no password and holds none, whether or not you have
+run `lrfl auth login`. A call may name any account number, as `lrfl balance <ACCOUNT>`
+may, because the district answers that lookup without a sign-in.
 
-A call may name any account number, as `lrfl balance <ACCOUNT>` may, because the
-district answers that lookup without a sign-in. When a login's list is in use, a call
-can name only the accounts on it.
-
-The Claude Desktop extension (`.mcpb`) takes the account number and nothing else. It
-holds no password and reads no keychain item.
+The Claude Desktop extension (`.mcpb`) takes the account number and nothing else, and
+reads no keychain item.
 
 `lrfl mcp --http --port <PORT>` serves the same tools over HTTP for the user's own
 Cloudflare Worker, which reaches it through the user's own Cloudflare Tunnel
 (cli-common's `connector/`). It binds 127.0.0.1 only, with no flag for another address,
 and refuses to start without a bearer token of 32 or more characters, from
 `LRFL_MCP_TOKEN` or the keychain item `mcp-http-token` (`piekstra.lrfl`, a different
-service from the password's), which `lrfl mcp --new-token` makes from 256 random bits
+service from your portal password's), which `lrfl mcp --new-token` makes from 256 random bits
 and replaces only with `--overwrite`. **A copy of the token lives in your Cloudflare
 Worker**, as its `HOME_LOXAHATCHEE_TOKEN` secret. Every request must carry the token
 (compared in constant time) and a `Host` of `127.0.0.1` or `localhost`, and must not
 carry an `Origin`; there are no CORS headers. Only the read-only tools are served (all
-four are). The Worker sends tool calls and receives results, and never sees a password.
+four are). That token is the only credential the server reads. The Worker sends tool
+calls and receives results.
 
 **Tool results also cross Cloudflare on this path**, through your tunnel and your
 Worker, on their way to Claude. Who holds what, and what a leaked token can do, is in
 the connector's
 [threat model](https://github.com/piekstra/cli-common/blob/main/connector/README.md#threat-model).
 
-`lrfl auth logout` removes the password and does not touch `mcp-http-token` or stop
-`lrfl mcp --http`. To revoke the connector's access, run `lrfl mcp --new-token
+`lrfl auth logout` removes the portal password and does not touch `mcp-http-token` or
+stop `lrfl mcp --http`. To revoke the connector's access, run `lrfl mcp --new-token
 --overwrite` and restart the server (`launchctl kickstart -k gui/$(id -u)/com.piekstra.lrfl-mcp-http`);
 the old token works until the restart. To stop serving, run `launchctl bootout
 gui/$(id -u)/com.piekstra.lrfl-mcp-http` and stop the tunnel.
