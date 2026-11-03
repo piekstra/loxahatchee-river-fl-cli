@@ -41,6 +41,7 @@ pub fn run(ctx: &Ctx, arg: &AccountArg, open: bool, save: Option<&str>) -> Resul
     let url = current_url(ctx, &id)?;
 
     if open {
+        crate::client::require_secure_document_url(&url)?;
         util::open_url(&url)?;
         if ctx.json {
             println!(

@@ -18,6 +18,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
+use pk_cli_core::transport::{require_secure_url, secure_redirects};
 use serde_json::Value;
 
 use crate::acct::AccountId;
@@ -47,6 +48,13 @@ const POLL_BUDGET: Duration = Duration::from_secs(20);
 /// Delay between poll attempts.
 const POLL_INTERVAL: Duration = Duration::from_millis(700);
 
+/// Refuse a bill document URL off `https`. The portal supplies it, it holds the
+/// account's document path, and the jar's cookies can go with it, so a response
+/// that names plain `http` is the provider misbehaving: exit 5, not a usage error.
+pub fn require_secure_document_url(url: &str) -> Result<(), AppError> {
+    require_secure_url(url).map_err(|e| AppError::Upstream(e.to_string()))
+}
+
 /// Client bound to a single tenant (`wipp_id`).
 pub struct Wipp {
     client: reqwest::blocking::Client,
@@ -60,6 +68,7 @@ impl Wipp {
             .timeout(Duration::from_secs(25))
             // The FIS login exchanges a session cookie (hop 1) for a JWT (hop 2).
             .cookie_store(true)
+            .redirect(secure_redirects())
             .build()
             .map_err(|e| AppError::Other(format!("failed to build HTTP client: {e}")))?;
         Ok(Self { client, wipp_id })
@@ -194,6 +203,7 @@ impl Wipp {
     /// the [`looks_like_real_pdf`] check, this returns [`AppError::NotFound`]
     /// so the CLI can tell the user the period isn't retained upstream.
     pub fn fetch_bill_pdf(&self, url: &str, due_date: &str) -> Result<Vec<u8>, AppError> {
+        require_secure_document_url(url)?;
         let resp = self.client.get(url).send()?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
@@ -227,6 +237,7 @@ impl Wipp {
     /// is trusted (e.g. the current bill via [`Wipp::bill_url`], which the
     /// portal itself calls without a PDF-shape check).
     pub fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>, AppError> {
+        require_secure_document_url(url)?;
         let resp = self.client.get(url).send()?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
@@ -464,7 +475,108 @@ fn looks_like_real_pdf(bytes: &[u8], content_type: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::looks_like_real_pdf;
+    use super::{looks_like_real_pdf, require_secure_document_url, Wipp};
+
+    /// A stub on 127.0.0.1. Answers each request with `respond(request)` as a raw
+    /// HTTP response, and keeps each request so a test can see what arrived.
+    fn stub(
+        respond: impl Fn(&str) -> String + Send + 'static,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                let request = loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    raw.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&raw).into_owned();
+                    let complete = text.split_once("\r\n\r\n").is_some_and(|(head, body)| {
+                        let length = head
+                            .lines()
+                            .find_map(|l| {
+                                let (name, value) = l.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())?
+                            })
+                            .unwrap_or(0);
+                        body.len() >= length
+                    });
+                    if n == 0 || complete {
+                        break text;
+                    }
+                };
+                let response = respond(&request);
+                log.lock().unwrap().push(request);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (base, seen)
+    }
+
+    fn redirect_to(location: &str) -> String {
+        format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    }
+
+    fn ok_json(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[test]
+    fn a_redirect_that_leaves_https_is_refused() {
+        let (base, seen) = stub(|_| redirect_to("http://docs.example.invalid/bill"));
+        let err = Wipp::new("LOXA".into())
+            .unwrap()
+            .fetch_bytes(&format!("{base}/start"))
+            .unwrap_err();
+        assert!(err.to_string().contains("leaves https"), "{err}");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_document_url_on_this_machine_is_fetched() {
+        let (base, _) = stub(|_| ok_json("%PDF-1.7"));
+        let bytes = Wipp::new("LOXA".into())
+            .unwrap()
+            .fetch_bytes(&format!("{base}/bill"))
+            .unwrap();
+        assert_eq!(bytes, b"%PDF-1.7");
+    }
+
+    #[test]
+    fn the_document_guard_takes_https_and_this_machine_only() {
+        for url in ["https://docs.example.invalid/b", "http://127.0.0.1:9/b"] {
+            assert!(require_secure_document_url(url).is_ok(), "{url}");
+        }
+        for url in ["ftp://docs.example.invalid/b", "not a url"] {
+            assert!(require_secure_document_url(url).is_err(), "{url}");
+        }
+    }
+
+    /// The portal names the document URL, so a response naming plain http must
+    /// not be fetched. This host resolves nowhere, and `only https` is the guard's
+    /// wording, so a network failure can't pass for the refusal.
+    #[test]
+    fn a_document_url_off_https_is_refused_before_anything_is_sent() {
+        let api = Wipp::new("LOXA".into()).unwrap();
+        let url = "http://docs.example.invalid/bill?account=1234567";
+        for err in [
+            api.fetch_bytes(url).unwrap_err(),
+            api.fetch_bill_pdf(url, "2026-01-01").unwrap_err(),
+        ] {
+            assert_eq!(err.exit_code(), 5, "{err}");
+            assert!(err.to_string().contains("only https"), "{err}");
+            assert!(!err.to_string().contains("1234567"), "{err}");
+        }
+    }
 
     /// The happy path: real PDF bytes, correct `application/pdf` type.
     #[test]
