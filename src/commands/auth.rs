@@ -56,6 +56,7 @@ pub fn info(ctx: &Ctx) -> Result<(), AppError> {
             "district",
             "accounts",
             "documents",
+            "mcp",
         ],
     )
     .with_profiles(&[pk_cli_utility::PROFILE, pk_cli_documents::PROFILE]);

@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased
+## v0.8.0 — 2026-11-03
 
 ### Added
+- **`lrfl mcp`**: read-only tools for Claude, the `utility/v1` set from cli-common's
+  `pk-cli-utility`: `loxahatchee_balance`, `loxahatchee_bills`, `loxahatchee_payments`
+  and `loxahatchee_usage`. They run over stdio for Claude Code and Claude Desktop, and
+  with `--http` on 127.0.0.1 behind a bearer token for Claude on the web and mobile
+  through your own Cloudflare Worker and tunnel.
+- Releases attach `lrfl-<version>.mcpb`, a Claude Desktop extension, and a Windows
+  x86_64 tarball.
+- `self-update` says to restart a running `lrfl mcp --http` and to install the new
+  `.mcpb`.
 - **`lrfl documents list`** and **`lrfl documents download <id>`** — the same
   bill PDFs, exposed under cli-common's shared **`documents/v1`** profile so the
   file surface is spelled identically across the CLI family. A document's id is
@@ -35,6 +44,16 @@
   `.pdf`. Closes #13.
 - `lrfl bill --save PATH` (the current-period shortcut) is unchanged and still
   works.
+
+### Changed
+- `$LRFL_PASSWORD` now comes before the keychain, the family's order, so a variable set
+  for one run costs no keychain prompt. Set but empty, it is now an error naming it.
+- Sign-in: a 403, 429 or gateway error from FIS's login, and any failure after it
+  accepted the credentials, is now exit 5 rather than exit 3, since it says nothing
+  about them.
+- `bills list --json`: a statement for several services on one due date now carries
+  their total, not the first service's amount.
+- cli-common v0.21.0, up from v0.7.0. Rust 1.89 or later.
 
 ## v0.6.0 — 2026-07-20
 

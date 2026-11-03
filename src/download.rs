@@ -46,7 +46,7 @@ pub struct Skipped {
 pub fn due_dates(periods: &[BillPeriod], service: Option<&str>) -> Vec<String> {
     let mut dues: Vec<String> = periods
         .iter()
-        .filter(|p| service.map_or(true, |s| p.service.eq_ignore_ascii_case(s.trim())))
+        .filter(|p| service.is_none_or(|s| p.service.eq_ignore_ascii_case(s.trim())))
         .map(|p| p.due_date.clone())
         .collect();
     dues.sort();

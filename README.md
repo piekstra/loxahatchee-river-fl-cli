@@ -174,6 +174,61 @@ lrfl documents download 2025-11-12 --json -o /tmp/nov.pdf | jq '{id, path, bytes
 In `--json` mode the JSON document is the only thing on **stdout**; diagnostics
 go to **stderr**, so `| jq` is always safe.
 
+## Use with Claude
+
+`lrfl mcp` serves four read-only tools to Claude over MCP: `loxahatchee_balance`,
+`loxahatchee_bills`, `loxahatchee_payments` and `loxahatchee_usage`. Nothing can make
+a payment or change your account. The tools read an account by its number, as the
+commands do, so they need no sign-in. Without a default account, a login adds the list
+of accounts linked to it. Bills are the current period and up to three before it.
+Usage exists only for metered services, in the district's own meter units.
+
+**Claude Code.** After `lrfl config set-account 1234567-0`:
+
+```sh
+claude mcp add loxahatchee -- lrfl mcp
+```
+
+Or install the `loxahatchee-river-fl-cli` plugin from
+[claude-plugins](https://github.com/piekstra/claude-plugins), which runs the same
+command.
+
+**Claude Desktop.** Download `lrfl-<version>.mcpb` from the
+[latest release](https://github.com/piekstra/loxahatchee-river-fl-cli/releases/latest)
+and open it. It asks for your account number and nothing else, and passes it to the
+bundled `lrfl` as `$LRFL_ACCOUNT`.
+
+Any other MCP client that launches a local server can run `lrfl mcp`.
+
+**Claude on the web and mobile.** claude.ai reaches tools through a remote connector,
+so `lrfl` serves the same tools from your computer to a connector you deploy into your
+own Cloudflare account:
+
+```console
+$ lrfl mcp --new-token            # once: a bearer token, saved in the keychain and printed for the Worker
+$ lrfl mcp --http --port 8734     # serve on 127.0.0.1 only
+```
+
+The connector, [cli-common's `connector/`](https://github.com/piekstra/cli-common/tree/main/connector#tools-from-your-computer-home-modules),
+reaches that port through a Cloudflare Tunnel in your account; its README walks
+through the tunnel, the VPC service, a launchd agent that keeps the server running,
+and the `HOME_LOXAHATCHEE_TOKEN` secret, with the threat model. `--http` binds
+127.0.0.1 only, refuses to start without the token, refuses any request whose `Host`
+is not loopback or that carries an `Origin`, and serves the read-only tools only. Tool
+results leave your computer on this path: your balance, bills, payments, usage and
+account number pass through Cloudflare and reach Claude ([`SECURITY.md`](SECURITY.md)).
+While the computer sleeps, the tools answer that it is offline.
+
+After `lrfl self-update`, restart the server: a running one keeps the old code, and its
+launchd agent restarts it only when it exits. Its start line names the version.
+
+```console
+$ launchctl kickstart -k gui/$(id -u)/com.piekstra.lrfl-mcp-http
+```
+
+`self-update` does not reach a Claude Desktop extension, which runs its own copy.
+Install the new release's `.mcpb` too.
+
 ## Privacy
 
 The CLI shows whatever the district's portal returns for an account — owner name

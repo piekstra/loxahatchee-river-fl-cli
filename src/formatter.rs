@@ -26,7 +26,7 @@ fn pk_money(v: f64) -> pk_cli_core::Money {
 /// Provider date text → ISO `YYYY-MM-DD` per the profile contract. Handles
 /// the portal's `MM/DD/YYYY` (and `M/D/YYYY`); ISO input and unrecognized
 /// text pass through verbatim rather than being lost.
-fn iso_date(s: &str) -> String {
+pub fn iso_date(s: &str) -> String {
     let s = s.trim();
     let parts: Vec<&str> = s.split('/').collect();
     if let [m, d, y] = parts.as_slice() {
@@ -42,7 +42,7 @@ fn iso_date(s: &str) -> String {
 /// The `utility-summary/v1` card for an account: total due, the earliest
 /// per-service due date, and the account number. Autopay isn't knowable from
 /// the guest-view endpoints (only the PDF bill carries it), so it stays unset.
-fn utility_summary(a: &Account) -> pk_cli_utility::UtilitySummary {
+pub fn utility_summary(a: &Account) -> pk_cli_utility::UtilitySummary {
     let mut dto = pk_cli_utility::UtilitySummary::new(pk_money(a.balance_due));
     dto.due_date = a
         .charges
@@ -55,7 +55,7 @@ fn utility_summary(a: &Account) -> pk_cli_utility::UtilitySummary {
 }
 
 /// One posted payment as the profile's `payment/v1` record.
-fn utility_payment(p: &Payment) -> pk_cli_utility::Payment {
+pub fn utility_payment(p: &Payment) -> pk_cli_utility::Payment {
     pk_cli_utility::Payment {
         date: iso_date(&p.payment_date),
         amount: pk_money(p.amount),
@@ -157,21 +157,55 @@ pub fn print_account(a: &Account, json: bool) {
 
 /// The `statement/v1` record for a group of periods that share a due date
 /// (WIPP serves one hosted PDF per date, so the profile envelope collapses
-/// per-service rows into one statement). The record borrows `id`/`date`/
-/// `amount` from the first period in the group but aggregates **`paid`
-/// conservatively**: it is only `true` when *every* per-service billing on
-/// that date is paid, so a partially-paid period (e.g. Water paid + Sewer
-/// outstanding) reports `paid: false` rather than whichever service happened
-/// to sort first. Per-service detail (including the individual `paid` flags)
-/// stays available in the sidecar `periods[]` array on the same envelope.
+/// per-service rows into one statement). The record borrows `id`/`date` from
+/// the first period in the group, totals `amount` across the group, and
+/// aggregates **`paid` conservatively**: it is only `true` when *every*
+/// per-service billing on that date is paid, so a partially-paid period (e.g.
+/// Water paid + Sewer outstanding) reports `paid: false` rather than whichever
+/// service happened to sort first. Per-service detail (including the individual
+/// `paid` flags) stays available in the sidecar `periods[]` array on the same
+/// envelope.
 fn utility_statement_from_group(group: &[&BillPeriod]) -> Option<pk_cli_utility::Statement> {
     let rep = group.first()?;
     Some(pk_cli_utility::Statement {
         id: rep.due_date.clone(),
         date: Some(rep.due_date.clone()),
-        amount: pk_money(rep.amount),
+        amount: pk_money(group.iter().map(|p| p.amount).sum()),
         due_date: Some(rep.due_date.clone()),
         paid: Some(group.iter().all(|p| p.paid)),
+    })
+}
+
+/// One `statement/v1` per due date, in the periods' order.
+pub fn statements_of(periods: &[BillPeriod]) -> Vec<pk_cli_utility::Statement> {
+    let mut order: Vec<&str> = Vec::new();
+    for p in periods {
+        if !order.contains(&p.due_date.as_str()) {
+            order.push(&p.due_date);
+        }
+    }
+    order
+        .iter()
+        .filter_map(|d| {
+            let group: Vec<&BillPeriod> = periods.iter().filter(|p| p.due_date == *d).collect();
+            utility_statement_from_group(&group)
+        })
+        .collect()
+}
+
+/// A metered period's `usage/v1` row, dated by its meter reading. The district
+/// states no unit, so the row names the service whose meter it is.
+pub fn usage_of(p: &BillPeriod) -> Option<pk_cli_utility::UsagePeriod> {
+    let period = if p.reading_date.is_empty() {
+        &p.due_date
+    } else {
+        &p.reading_date
+    };
+    Some(pk_cli_utility::UsagePeriod {
+        period: iso_date(period),
+        quantity: p.usage? as f64,
+        unit: format!("{} meter units", p.service),
+        cost: None,
     })
 }
 
@@ -187,20 +221,7 @@ pub fn print_bills(account_id: &str, periods: &[BillPeriod], json: bool) {
         // Dedupe by due date for the profile envelope (one hosted PDF per
         // date). Where multiple services share a due date, aggregate their
         // `paid` flags with `all()` — see `utility_statement_from_group`.
-        let mut order: Vec<String> = Vec::new();
-        for p in periods {
-            if !order.iter().any(|d| d == &p.due_date) {
-                order.push(p.due_date.clone());
-            }
-        }
-        let statements: Vec<pk_cli_utility::Statement> = order
-            .iter()
-            .filter_map(|d| {
-                let group: Vec<&BillPeriod> = periods.iter().filter(|p| &p.due_date == d).collect();
-                utility_statement_from_group(&group)
-            })
-            .collect();
-        let paged = pk_cli_utility::Paged::new("statement", statements);
+        let paged = pk_cli_utility::Paged::new("statement", statements_of(periods));
         let mut env = serde_json::to_value(paged).expect("serialize bills");
         if let Some(obj) = env.as_object_mut() {
             obj.insert("account".into(), json!(account_id));

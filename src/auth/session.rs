@@ -97,10 +97,15 @@ impl Session {
                 .unwrap_or(false)
     }
 
+    /// The password for `login`: `$LRFL_PASSWORD`, then the keychain.
+    pub fn password(&self, login: &str) -> Result<Secret, AppError> {
+        crate::auth::secrets::resolve(&self.store, login, ENV_PASSWORD)
+    }
+
     /// Mint a fresh `id_token` for `login` by performing the FIS login with the
     /// stored password.
     pub fn access_token(&self, api: &Wipp, login: &str) -> Result<String, AppError> {
-        let password = crate::auth::secrets::resolve(&self.store, login, ENV_PASSWORD)?;
+        let password = self.password(login)?;
         api.fis_login(login, password.expose())
     }
 }

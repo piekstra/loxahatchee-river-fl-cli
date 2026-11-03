@@ -6,11 +6,17 @@ use clap::Parser;
 use loxahatchee_river_fl::cli::{Cli, Command};
 use loxahatchee_river_fl::commands::{self, Ctx};
 use loxahatchee_river_fl::error::AppError;
+use loxahatchee_river_fl::mcp;
 
 fn run(cli: Cli) -> Result<(), AppError> {
     // `completions` only needs the clap command definition, not a client/session.
     if let Command::Completions { shell } = &cli.command {
         return commands::completions::run(*shell);
+    }
+
+    // The server builds its own client, and reads nothing to list its tools.
+    if let Command::Mcp(args) = &cli.command {
+        return pk_cli_mcp::run(args, mcp::tools(cli.wipp_id.clone(), cli.email.clone())?);
     }
 
     let ctx = Ctx::new(&cli)?;
@@ -50,7 +56,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::Info => commands::auth::info(&ctx),
         Command::Accounts { balances } => commands::accounts::run(&ctx, *balances),
         Command::SelfUpdate(args) => commands::self_update::run(&ctx, args),
-        Command::Completions { .. } => unreachable!("handled above"),
+        Command::Completions { .. } | Command::Mcp(_) => unreachable!("handled above"),
     }
 }
 

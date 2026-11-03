@@ -67,6 +67,20 @@ pub struct Account {
     pub balance_due: f64,
 }
 
+/// Whether a `GET /wippUtil/{id}` body states what the balance is built from.
+/// [`Account::from_node`] reads a missing principal as 0.00, and no services as
+/// nothing owed.
+pub fn balance_stated(v: &Value) -> bool {
+    v.get("chargeTypes")
+        .and_then(Value::as_object)
+        .is_some_and(|services| {
+            !services.is_empty()
+                && services
+                    .values()
+                    .all(|node| node.get("totPrnBal").is_some_and(Value::is_number))
+        })
+}
+
 impl Account {
     /// Build an [`Account`] from a `GET /wippUtil/{id}` body. `display_id` is the
     /// caller's dashed account number (the API echoes a space-padded form).

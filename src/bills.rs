@@ -140,6 +140,21 @@ fn service_periods(service: &str, node: &Value) -> Vec<BillPeriod> {
     out
 }
 
+/// Whether every period [`BillPeriod::list_from_account`] would find states its
+/// amount, which that function otherwise reads as 0.00.
+pub fn amounts_stated(v: &Value) -> bool {
+    let Some(services) = v.get("chargeTypes").and_then(Value::as_object) else {
+        return false;
+    };
+    services.values().all(|node| {
+        let number = |key: &str| node.get(key).is_some_and(Value::is_number);
+        let due = |key: &str| clean_date(string_at(node, key)).is_some();
+        (!due("currDueDate") || number("currPrdBilled") || number("currPrdPrnBal"))
+            && (1..=3)
+                .all(|n| !due(&format!("priorDueDate{n}")) || number(&format!("priorPrdBilled{n}")))
+    })
+}
+
 /// Drop the API's `1000-01-01` "never" sentinel and any blank/space-only value.
 fn clean_date(s: String) -> Option<String> {
     let s = s.trim().to_string();
