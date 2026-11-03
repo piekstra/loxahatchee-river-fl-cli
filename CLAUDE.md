@@ -103,8 +103,9 @@ cargo fmt --all
   hops on one cookie session: `POST /proxy/fis/rest/1.0/sessions {loginName,
   password}` (api-type: auth) → session cookies, then `GET
   /proxy/fis/rest/1.0/idptoken/openid-connect?client_id=Enroll.User` → an
-  `id_token` JWT used as the bearer. Wrong passwords come back `400` on hop 1. The
-  client needs `cookie_store(true)`. The password is the persisted credential
+  `id_token` JWT used as the bearer. Wrong passwords come back `400` on hop 1. The login client and the general client share one
+  cookie jar (`cookie_provider`), and the login client uses `same_host_redirects`, so
+  the password is never re-sent to another host. The password is the persisted credential
   (keychain) — FIS exposes no refresh token. Cognito-only endpoints
   (`/accounts/cognitoUsers`, `/payments/schedules`, `/wallet/Accounts`) 403/500
   for FIS users and are intentionally not shipped; `/accounts/billingAccounts`

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.2 — 2026-11-03
+
+### Security
+- The login password is no longer re-sent to another host. On a 307 or 308 reqwest
+  re-sends a POST's body, and `lrfl` allowed that to any https host. The login now
+  refuses any redirect to another host, with exit 5 and the reason.
+
 ## v0.8.1 — 2026-11-03
 
 ### Security

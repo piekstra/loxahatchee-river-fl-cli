@@ -18,7 +18,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use pk_cli_core::transport::{require_secure_url, secure_redirects};
+use pk_cli_core::transport::{require_secure_url, same_host_redirects, secure_redirects};
 use serde_json::Value;
 
 use crate::acct::AccountId;
@@ -58,20 +58,31 @@ pub fn require_secure_document_url(url: &str) -> Result<(), AppError> {
 /// Client bound to a single tenant (`wipp_id`).
 pub struct Wipp {
     client: reqwest::blocking::Client,
+    /// For the login, whose body holds the password. reqwest re-sends a body on a
+    /// 307 or 308, and `secure_redirects` allows that to any https host. It shares
+    /// the cookie jar, so the session it establishes reaches the other requests.
+    login_client: reqwest::blocking::Client,
     wipp_id: String,
 }
 
 impl Wipp {
     pub fn new(wipp_id: String) -> Result<Self, AppError> {
-        let client = reqwest::blocking::Client::builder()
-            .user_agent(UA)
-            .timeout(Duration::from_secs(25))
-            // The FIS login exchanges a session cookie (hop 1) for a JWT (hop 2).
-            .cookie_store(true)
-            .redirect(secure_redirects())
-            .build()
-            .map_err(|e| AppError::Other(format!("failed to build HTTP client: {e}")))?;
-        Ok(Self { client, wipp_id })
+        // The FIS login exchanges a session cookie (hop 1) for a JWT (hop 2).
+        let jar = std::sync::Arc::new(reqwest::cookie::Jar::default());
+        let client = |redirects| {
+            reqwest::blocking::Client::builder()
+                .user_agent(UA)
+                .timeout(Duration::from_secs(25))
+                .cookie_provider(jar.clone())
+                .redirect(redirects)
+                .build()
+                .map_err(|e| AppError::Other(format!("failed to build HTTP client: {e}")))
+        };
+        Ok(Self {
+            client: client(secure_redirects())?,
+            login_client: client(same_host_redirects())?,
+            wipp_id,
+        })
     }
 
     pub fn wipp_id(&self) -> &str {
@@ -333,11 +344,20 @@ impl Wipp {
     /// Log in via the FIS session flow and return the resulting `id_token` (a
     /// short-lived JWT used as the bearer for authenticated calls).
     pub fn fis_login(&self, login_name: &str, password: &str) -> Result<String, AppError> {
+        self.fis_login_at(FIS_PROXY, login_name, password)
+    }
+
+    fn fis_login_at(
+        &self,
+        proxy: &str,
+        login_name: &str,
+        password: &str,
+    ) -> Result<String, AppError> {
         // Hop 1: establish the session (Set-Cookie captured by the cookie store).
         let body = serde_json::json!({ "loginName": login_name, "password": password });
         let (s1, b1) = parse_response(
-            self.client
-                .post(format!("{FIS_PROXY}/rest/1.0/sessions"))
+            self.login_client
+                .post(format!("{proxy}/rest/1.0/sessions"))
                 .header("X-Wipp-Id", &self.wipp_id)
                 .header("api-type", "auth")
                 .header("Accept", "application/json, text/plain, */*")
@@ -353,9 +373,9 @@ impl Wipp {
 
         // Hop 2: exchange the session for an OpenID id_token.
         let (s2, b2) = parse_response(
-            self.client
+            self.login_client
                 .get(format!(
-                    "{FIS_PROXY}/rest/1.0/idptoken/openid-connect?client_id=Enroll.User"
+                    "{proxy}/rest/1.0/idptoken/openid-connect?client_id=Enroll.User"
                 ))
                 .header("X-Wipp-Id", &self.wipp_id)
                 .header("api-type", "auth")
@@ -528,6 +548,23 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         )
+    }
+
+    #[test]
+    fn a_password_is_not_re_sent_to_another_host_on_a_307() {
+        let (other, reached) = stub(|_| {
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+        });
+        let target = format!("{other}/collect");
+        let (base, _) = stub(move |_| {
+            format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        });
+        let err = Wipp::new("LOXA".into())
+            .unwrap()
+            .fis_login_at(&base, "user", "dummy-password")
+            .unwrap_err();
+        assert!(err.to_string().contains("another host"), "{err}");
+        assert!(reached.lock().unwrap().is_empty());
     }
 
     #[test]

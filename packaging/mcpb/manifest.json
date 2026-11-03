@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "lrfl",
   "display_name": "Loxahatchee River District (lrfl)",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Read-only access to your own Loxahatchee River District balance, bills, payments and metered use, through the open-source lrfl CLI.",
   "long_description": "Ask Claude about your Loxahatchee River District account: what you owe and when it is due, what recent bills came to and whether they are paid, which payments were recorded, and your metered use. Four read-only tools, loxahatchee_balance, loxahatchee_bills, loxahatchee_payments and loxahatchee_usage; nothing can make a payment or change your account. It reads the account number you enter here through the district's anonymous lookup, so it asks for no password and holds none. What the tools return (balance, bills, payments, usage, account number) goes to Claude as part of your conversation. Unofficial; not affiliated with the Loxahatchee River District.",
   "author": {
