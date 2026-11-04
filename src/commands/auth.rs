@@ -1,11 +1,13 @@
 //! `login` / `logout` / `whoami` — manage the keychain-backed login session.
 
 use pk_cli_auth::{AuthMethod, AuthStatus};
+use pk_cli_secrets::CredentialStore;
 
 use crate::auth::session::ENV_PASSWORD;
 use crate::auth::Session;
 use crate::cli::AuthCmd;
 use crate::commands::Ctx;
+use crate::config;
 use crate::error::AppError;
 use crate::formatter;
 use crate::util;
@@ -13,7 +15,7 @@ use crate::util;
 pub fn run(ctx: &Ctx, cmd: &AuthCmd) -> Result<(), AppError> {
     match cmd {
         AuthCmd::Login => login(ctx),
-        AuthCmd::Logout => logout(ctx),
+        AuthCmd::Logout(args) => logout(ctx, args.forget),
         AuthCmd::Status => status(ctx),
         AuthCmd::Whoami => whoami(ctx),
     }
@@ -96,22 +98,54 @@ pub fn login(ctx: &Ctx) -> Result<(), AppError> {
     Ok(())
 }
 
-pub fn logout(ctx: &Ctx) -> Result<(), AppError> {
-    let login = ctx.session.resolve_login(ctx.login.as_deref())?;
-    let removed = ctx.session.logout(&login)?;
+pub fn logout(ctx: &Ctx, forget: bool) -> Result<(), AppError> {
+    // A connector token can outlive a login, so `--forget` works with no login to clear.
+    let login = match ctx.session.resolve_login(ctx.login.as_deref()) {
+        Ok(login) => Some(login),
+        Err(_) if forget => None,
+        Err(e) => return Err(e),
+    };
+    let removed = match &login {
+        Some(login) => ctx.session.logout(login)?,
+        None => false,
+    };
+    let token =
+        forget.then(|| CredentialStore::for_binary("lrfl").delete(pk_cli_mcp::HTTP_TOKEN_ACCOUNT));
+    if forget {
+        config::clear_default_account();
+    }
+    // Before anything is printed, so a failure is the one JSON document of this call.
+    let token_removed = token.map(finish_forget).transpose()?;
     if ctx.json {
-        println!(
-            "{}",
-            serde_json::json!({ "login": login, "removed": removed })
-        );
+        let mut out = serde_json::json!({ "login": login, "removed": removed });
+        if let Some(token_removed) = token_removed {
+            out["connector_token_removed"] = token_removed.into();
+        }
+        println!("{out}");
     } else if !ctx.quiet {
-        if removed {
-            println!("✓ logged out {login}");
-        } else {
-            println!("no stored session for {login}");
+        match (&login, removed) {
+            (Some(login), true) => println!("✓ logged out {login}"),
+            (Some(login), false) => println!("no stored session for {login}"),
+            (None, _) => println!("no login to clear"),
         }
     }
+    if token_removed == Some(true) && !ctx.quiet {
+        eprintln!("{}", pk_cli_mcp::stop_note("lrfl"));
+    }
     Ok(())
+}
+
+/// Whether `auth logout --forget` removed a connector token. Nothing records whether `mcp
+/// --new-token` ran, so the delete is ungated, and one that could not be removed is an error,
+/// since it still opens the connector.
+fn finish_forget(token: Result<bool, AppError>) -> Result<bool, AppError> {
+    token.map_err(|failure| {
+        AppError::Keychain(format!(
+            "the connector token of `lrfl mcp --http` could not be removed, if there is one, and \
+             would still open the connector: {}. Run `lrfl auth logout --forget` again.",
+            failure.message()
+        ))
+    })
 }
 
 pub fn whoami(ctx: &Ctx) -> Result<(), AppError> {
@@ -128,4 +162,24 @@ pub fn whoami(ctx: &Ctx) -> Result<(), AppError> {
         other => formatter::print_whoami(other.as_deref(), None, ctx.json),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::AppError;
+
+    #[test]
+    fn a_forget_that_could_not_remove_the_connector_token_says_so() {
+        let denied = AppError::Keychain("denied".into());
+        let says = super::finish_forget(Err(denied)).unwrap_err().to_string();
+        assert!(says.contains("connector token"), "{says}");
+        assert!(says.contains("`lrfl auth logout --forget`"), "{says}");
+        assert!(says.contains("denied"), "{says}");
+    }
+
+    #[test]
+    fn a_forget_with_a_token_or_without_one_finishes() {
+        assert!(super::finish_forget(Ok(true)).unwrap());
+        assert!(!super::finish_forget(Ok(false)).unwrap());
+    }
 }

@@ -66,7 +66,8 @@ the connector's
 [threat model](https://github.com/piekstra/cli-common/blob/main/connector/README.md#threat-model).
 
 `lrfl auth logout` removes the portal password and does not touch `mcp-http-token` or
-stop `lrfl mcp --http`. To revoke the connector's access, run `lrfl mcp --new-token
+stop `lrfl mcp --http`. `lrfl auth logout --forget` removes the token from the keychain
+too, and says so, but a running server keeps the token it started with. To revoke the connector's access, run `lrfl mcp --new-token
 --overwrite` and restart the server (`launchctl kickstart -k gui/$(id -u)/com.piekstra.lrfl-mcp-http`);
 the old token works until the restart. To stop serving, run `launchctl bootout
 gui/$(id -u)/com.piekstra.lrfl-mcp-http` and stop the tunnel.

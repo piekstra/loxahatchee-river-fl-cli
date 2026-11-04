@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.3 — 2026-11-03
+
+- `auth logout --forget` is new. It also removes the connector token `mcp-http-token` and the
+  default account, and says what that does not end: a running `lrfl mcp --http` keeps the token it
+  started with. It works with no login to clear.
+- cli-common v0.27.0, up from v0.24.0.
+
 ## v0.8.2 — 2026-11-03
 
 ### Security
