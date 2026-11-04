@@ -71,6 +71,7 @@ too, and says so, but a running server keeps the token it started with. To revok
 --overwrite` and restart the server (`launchctl kickstart -k gui/$(id -u)/com.piekstra.lrfl-mcp-http`);
 the old token works until the restart. To stop serving, run `launchctl bootout
 gui/$(id -u)/com.piekstra.lrfl-mcp-http` and stop the tunnel.
+A token supplied through `$LRFL_MCP_TOKEN` is not stored, so the logout cannot reach it: to end it, unset the variable and stop the server.
 
 ## Supported versions
 
