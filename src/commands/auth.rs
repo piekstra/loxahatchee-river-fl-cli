@@ -100,19 +100,20 @@ pub fn login(ctx: &Ctx) -> Result<(), AppError> {
 
 pub fn logout(ctx: &Ctx, forget: bool) -> Result<(), AppError> {
     let login = login_to_clear(ctx.session.resolve_login(ctx.login.as_deref()), forget)?;
-    let removed = match &login {
-        Some(login) => ctx.session.logout(login)?,
-        None => false,
+    let session = match &login {
+        Some(login) => ctx.session.logout(login),
+        None => Ok(false),
     };
-    let token_removed = if forget {
+    let (removed, token_removed) = if forget {
         let token = CredentialStore::for_binary("lrfl").delete(pk_cli_mcp::HTTP_TOKEN_ACCOUNT);
         let account = config::clear_default_account()
             .map(drop)
             .map_err(|e| AppError::Other(format!("removing the default account: {e}")));
         // Before anything is printed, so a failure is the one JSON document of this call.
-        Some(finish_forget(token, account)?)
+        let (removed, token_removed) = finish_forget(session, token, account, ctx.quiet)?;
+        (removed, Some(token_removed))
     } else {
-        None
+        (session?, None)
     };
     if ctx.json {
         println!("{}", logout_json(login.as_deref(), removed, token_removed));
@@ -122,9 +123,6 @@ pub fn logout(ctx: &Ctx, forget: bool) -> Result<(), AppError> {
             (Some(login), false) => println!("no stored session for {login}"),
             (None, _) => println!("no login to clear"),
         }
-    }
-    if token_removed == Some(true) && !ctx.quiet {
-        eprintln!("{}", pk_cli_mcp::stop_note("lrfl"));
     }
     Ok(())
 }
@@ -159,25 +157,45 @@ fn logout_json(
     out
 }
 
-/// Whether `auth logout --forget` removed a connector token. Nothing records whether `mcp
-/// --new-token` ran, so the delete is ungated, and it and the default account's are both attempted:
-/// neither failure hides the other.
+/// Whether `auth logout --forget` removed a session and a connector token. Nothing records whether
+/// `mcp --new-token` ran, so the token's delete is ungated. Every step is attempted and every failure
+/// reported here: none hides another, or the note that a removed token still needs, since a rerun
+/// finds no item.
 fn finish_forget(
+    session: Result<bool, AppError>,
     token: Result<bool, AppError>,
     account: Result<(), AppError>,
-) -> Result<bool, AppError> {
-    match (token, account) {
-        (Err(failure), account) => Err(AppError::Keychain(format!(
-            "the connector token of `lrfl mcp --http` could not be removed ({}) and would still \
-             open the connector{}; run `lrfl auth logout --forget` again",
-            failure.message(),
-            account
-                .err()
-                .map(|e| format!(", and {}", e.message()))
-                .unwrap_or_default(),
-        ))),
-        (Ok(_), Err(e)) => Err(e),
-        (Ok(removed), Ok(())) => Ok(removed),
+    quiet: bool,
+) -> Result<(bool, bool), AppError> {
+    if matches!(token, Ok(true)) && !quiet {
+        eprintln!("{}", pk_cli_mcp::stop_note("lrfl"));
+    }
+    match (session, token, account) {
+        (Ok(removed), Ok(token_removed), Ok(())) => Ok((removed, token_removed)),
+        (Ok(_), Ok(_), Err(e)) => Err(e),
+        (session, token, account) => {
+            let mut failed = Vec::new();
+            if let Err(e) = session {
+                failed.push(format!(
+                    "the stored session could not be removed ({})",
+                    e.message()
+                ));
+            }
+            if let Err(e) = token {
+                failed.push(format!(
+                    "the connector token of `lrfl mcp --http` could not be removed ({}) and would \
+                     still open the connector",
+                    e.message()
+                ));
+            }
+            if let Err(e) = account {
+                failed.push(e.message().to_string());
+            }
+            Err(AppError::Keychain(format!(
+                "{}; run `lrfl auth logout --forget` again",
+                failed.join(", and ")
+            )))
+        }
     }
 }
 
@@ -235,31 +253,46 @@ mod tests {
     #[test]
     fn a_forget_that_could_not_remove_the_connector_token_says_so() {
         let denied = AppError::Keychain("denied".into());
-        let says = finish_forget(Err(denied), Ok(())).unwrap_err().to_string();
+        let says = finish_forget(Ok(true), Err(denied), Ok(()), true)
+            .unwrap_err()
+            .to_string();
         assert!(says.contains("connector token"), "{says}");
         assert!(says.contains("`lrfl auth logout --forget`"), "{says}");
         assert!(says.contains("denied"), "{says}");
     }
 
     #[test]
-    fn neither_failure_of_a_forget_hides_the_other() {
+    fn no_failure_of_a_forget_hides_another() {
         let says = finish_forget(
+            Err(AppError::Keychain("locked".into())),
             Err(AppError::Keychain("denied".into())),
             Err(AppError::Other("read-only".into())),
+            true,
         )
         .unwrap_err()
         .to_string();
-        assert!(
-            says.contains("denied") && says.contains("read-only"),
-            "{says}"
-        );
-        let e = finish_forget(Ok(true), Err(AppError::Other("read-only".into()))).unwrap_err();
+        for cause in ["locked", "denied", "read-only"] {
+            assert!(says.contains(cause), "{says}");
+        }
+        let e = finish_forget(
+            Ok(true),
+            Ok(true),
+            Err(AppError::Other("read-only".into())),
+            true,
+        )
+        .unwrap_err();
         assert!(e.to_string().contains("read-only"), "{e}");
     }
 
     #[test]
-    fn a_forget_says_whether_it_removed_a_token() {
-        assert!(finish_forget(Ok(true), Ok(())).unwrap());
-        assert!(!finish_forget(Ok(false), Ok(())).unwrap());
+    fn a_forget_says_what_it_removed() {
+        assert_eq!(
+            finish_forget(Ok(true), Ok(true), Ok(()), true).unwrap(),
+            (true, true)
+        );
+        assert_eq!(
+            finish_forget(Ok(false), Ok(false), Ok(()), true).unwrap(),
+            (false, false)
+        );
     }
 }
