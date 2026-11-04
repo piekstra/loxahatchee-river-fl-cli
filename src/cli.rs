@@ -288,8 +288,9 @@ pub enum DocumentsCmd {
 pub enum AuthCmd {
     /// Log in with your portal email + password (stored in the OS keychain).
     Login,
-    /// Log out: remove the stored credential from the keychain.
-    Logout,
+    /// Log out: remove the stored credential from the keychain. `--forget` also removes the
+    /// connector token and the default account.
+    Logout(pk_cli_auth::LogoutArgs),
     /// Credential and session status (auth-status/v1 with --json).
     Status,
     /// Show who you're logged in as (identity from the session token).

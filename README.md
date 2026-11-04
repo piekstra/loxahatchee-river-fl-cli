@@ -90,6 +90,7 @@ lrfl login                    # prompts for email + password (no-echo)
 lrfl whoami                   # who you're logged in as (name, user id)
 lrfl accounts --balances      # linked accounts, with what you owe on each
 lrfl logout                   # removes the stored session
+lrfl auth logout --forget     # also the connector token and the default account
 ```
 
 Once you're logged in, the account-scoped commands need **no account argument** —

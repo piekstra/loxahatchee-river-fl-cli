@@ -51,7 +51,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::Config { action } => commands::config::run(&ctx, action),
         Command::Auth(cmd) => commands::auth::run(&ctx, cmd),
         Command::Login => commands::auth::login(&ctx),
-        Command::Logout => commands::auth::logout(&ctx),
+        Command::Logout => commands::auth::logout(&ctx, false),
         Command::Whoami => commands::auth::whoami(&ctx),
         Command::Info => commands::auth::info(&ctx),
         Command::Accounts { balances } => commands::accounts::run(&ctx, *balances),
