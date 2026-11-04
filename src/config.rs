@@ -44,10 +44,14 @@ pub fn save_default_account(account: &str) -> std::io::Result<()> {
 }
 
 /// Forget the default account. Returns `true` if a file was removed.
-pub fn clear_default_account() -> bool {
+pub fn clear_default_account() -> std::io::Result<bool> {
     match default_account_path() {
-        Some(p) if p.exists() => std::fs::remove_file(p).is_ok(),
-        _ => false,
+        Some(p) => match std::fs::remove_file(p) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        },
+        None => Ok(false),
     }
 }
 

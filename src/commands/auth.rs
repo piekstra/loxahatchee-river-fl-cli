@@ -99,29 +99,23 @@ pub fn login(ctx: &Ctx) -> Result<(), AppError> {
 }
 
 pub fn logout(ctx: &Ctx, forget: bool) -> Result<(), AppError> {
-    // A connector token can outlive a login, so `--forget` works with no login to clear.
-    let login = match ctx.session.resolve_login(ctx.login.as_deref()) {
-        Ok(login) => Some(login),
-        Err(_) if forget => None,
-        Err(e) => return Err(e),
-    };
+    let login = login_to_clear(ctx.session.resolve_login(ctx.login.as_deref()), forget)?;
     let removed = match &login {
         Some(login) => ctx.session.logout(login)?,
         None => false,
     };
-    let token =
-        forget.then(|| CredentialStore::for_binary("lrfl").delete(pk_cli_mcp::HTTP_TOKEN_ACCOUNT));
-    if forget {
-        config::clear_default_account();
-    }
-    // Before anything is printed, so a failure is the one JSON document of this call.
-    let token_removed = token.map(finish_forget).transpose()?;
+    let token_removed = if forget {
+        let token = CredentialStore::for_binary("lrfl").delete(pk_cli_mcp::HTTP_TOKEN_ACCOUNT);
+        let account = config::clear_default_account()
+            .map(drop)
+            .map_err(|e| AppError::Other(format!("removing the default account: {e}")));
+        // Before anything is printed, so a failure is the one JSON document of this call.
+        Some(finish_forget(token, account)?)
+    } else {
+        None
+    };
     if ctx.json {
-        let mut out = serde_json::json!({ "login": login, "removed": removed });
-        if let Some(token_removed) = token_removed {
-            out["connector_token_removed"] = token_removed.into();
-        }
-        println!("{out}");
+        println!("{}", logout_json(login.as_deref(), removed, token_removed));
     } else if !ctx.quiet {
         match (&login, removed) {
             (Some(login), true) => println!("✓ logged out {login}"),
@@ -135,17 +129,56 @@ pub fn logout(ctx: &Ctx, forget: bool) -> Result<(), AppError> {
     Ok(())
 }
 
+/// The login a logout clears. A connector token can outlive a login, so `--forget` works with no
+/// login known. Any other failure to find one is still a failure.
+fn login_to_clear(
+    resolved: Result<String, AppError>,
+    forget: bool,
+) -> Result<Option<String>, AppError> {
+    match resolved {
+        Ok(login) => Ok(Some(login)),
+        Err(e) if forget && e.is_auth() => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// `auth logout --json`. `login` and `connector_token_removed` are left out when they have no
+/// value: no login was known, or this was not a `--forget`.
+fn logout_json(
+    login: Option<&str>,
+    removed: bool,
+    token_removed: Option<bool>,
+) -> serde_json::Value {
+    let mut out = serde_json::json!({ "removed": removed });
+    if let Some(login) = login {
+        out["login"] = login.into();
+    }
+    if let Some(token_removed) = token_removed {
+        out["connector_token_removed"] = token_removed.into();
+    }
+    out
+}
+
 /// Whether `auth logout --forget` removed a connector token. Nothing records whether `mcp
-/// --new-token` ran, so the delete is ungated, and one that could not be removed is an error,
-/// since it still opens the connector.
-fn finish_forget(token: Result<bool, AppError>) -> Result<bool, AppError> {
-    token.map_err(|failure| {
-        AppError::Keychain(format!(
-            "the connector token of `lrfl mcp --http` could not be removed, if there is one, and \
-             would still open the connector: {}. Run `lrfl auth logout --forget` again.",
-            failure.message()
-        ))
-    })
+/// --new-token` ran, so the delete is ungated, and it and the default account's are both attempted:
+/// neither failure hides the other.
+fn finish_forget(
+    token: Result<bool, AppError>,
+    account: Result<(), AppError>,
+) -> Result<bool, AppError> {
+    match (token, account) {
+        (Err(failure), account) => Err(AppError::Keychain(format!(
+            "the connector token of `lrfl mcp --http` could not be removed ({}) and would still \
+             open the connector{}; run `lrfl auth logout --forget` again",
+            failure.message(),
+            account
+                .err()
+                .map(|e| format!(", and {}", e.message()))
+                .unwrap_or_default(),
+        ))),
+        (Ok(_), Err(e)) => Err(e),
+        (Ok(removed), Ok(())) => Ok(removed),
+    }
 }
 
 pub fn whoami(ctx: &Ctx) -> Result<(), AppError> {
@@ -166,20 +199,67 @@ pub fn whoami(ctx: &Ctx) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
+    use super::{finish_forget, login_to_clear, logout_json};
     use crate::error::AppError;
+    use serde_json::json;
+
+    #[test]
+    fn only_a_forget_goes_on_with_no_login_known() {
+        let none = || Err(AppError::Auth("not logged in".into()));
+        assert_eq!(login_to_clear(none(), true).unwrap(), None);
+        assert_eq!(login_to_clear(none(), false).unwrap_err().exit_code(), 3);
+        let known = login_to_clear(Ok("dummy@example.com".into()), false).unwrap();
+        assert_eq!(known.as_deref(), Some("dummy@example.com"));
+    }
+
+    #[test]
+    fn any_other_failure_to_find_a_login_stays_a_failure() {
+        let broken = Err(AppError::Keychain("denied".into()));
+        assert!(login_to_clear(broken, true).is_err());
+    }
+
+    #[test]
+    fn the_json_answer_holds_only_what_has_a_value() {
+        let plain = logout_json(Some("dummy@example.com"), true, None);
+        assert_eq!(
+            plain,
+            json!({"login": "dummy@example.com", "removed": true})
+        );
+        let forgot = logout_json(None, false, Some(true));
+        assert_eq!(
+            forgot,
+            json!({"removed": false, "connector_token_removed": true})
+        );
+    }
 
     #[test]
     fn a_forget_that_could_not_remove_the_connector_token_says_so() {
         let denied = AppError::Keychain("denied".into());
-        let says = super::finish_forget(Err(denied)).unwrap_err().to_string();
+        let says = finish_forget(Err(denied), Ok(())).unwrap_err().to_string();
         assert!(says.contains("connector token"), "{says}");
         assert!(says.contains("`lrfl auth logout --forget`"), "{says}");
         assert!(says.contains("denied"), "{says}");
     }
 
     #[test]
-    fn a_forget_with_a_token_or_without_one_finishes() {
-        assert!(super::finish_forget(Ok(true)).unwrap());
-        assert!(!super::finish_forget(Ok(false)).unwrap());
+    fn neither_failure_of_a_forget_hides_the_other() {
+        let says = finish_forget(
+            Err(AppError::Keychain("denied".into())),
+            Err(AppError::Other("read-only".into())),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            says.contains("denied") && says.contains("read-only"),
+            "{says}"
+        );
+        let e = finish_forget(Ok(true), Err(AppError::Other("read-only".into()))).unwrap_err();
+        assert!(e.to_string().contains("read-only"), "{e}");
+    }
+
+    #[test]
+    fn a_forget_says_whether_it_removed_a_token() {
+        assert!(finish_forget(Ok(true), Ok(())).unwrap());
+        assert!(!finish_forget(Ok(false), Ok(())).unwrap());
     }
 }

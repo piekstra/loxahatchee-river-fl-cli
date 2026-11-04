@@ -23,7 +23,9 @@ pub fn run(ctx: &Ctx, action: &ConfigAction) -> Result<(), AppError> {
             }
         }
         ConfigAction::Clear => {
-            let removed = config::clear_default_account();
+            let removed = config::clear_default_account().map_err(|e| {
+                crate::error::AppError::Other(format!("removing the default account: {e}"))
+            })?;
             if ctx.json {
                 println!("{}", serde_json::json!({ "cleared": removed }));
             } else if !ctx.quiet {
