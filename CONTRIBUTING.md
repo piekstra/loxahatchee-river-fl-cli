@@ -8,7 +8,6 @@ District's WIPP utility-billing portal.
 - Open or comment on an issue describing the change.
 - Branch from `main` (`feat/…`, `fix/…`, `docs/…`); don't push to `main` directly.
 - Use [Conventional Commits](https://www.conventionalcommits.org/).
-- Enable the pre-commit hook once: `git config core.hooksPath .githooks`.
 
 ## Local checks (must pass)
 
@@ -27,7 +26,7 @@ and a missing field shouldn't crash a lookup.
 
 - **No secrets or PII** in code, tests, fixtures, or commits — real account
   numbers, names, addresses, or balances included. This tool needs no
-  credentials; keep it that way. `gitleaks` runs in the pre-commit hook.
+  credentials; keep it that way. CI runs `gitleaks` on every pull request.
 - The CLI shows whatever the portal returns (owner name/address included); it
   doesn't add redaction the provider itself doesn't. (The repo-hygiene rule above
   is separate — it's about committed code, never runtime output.)

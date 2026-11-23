@@ -27,7 +27,7 @@ The main concerns are therefore:
   itself (`Debug`/`Display` redacted) and is zeroized on drop; nothing secret is
   logged or written to disk. `$LRFL_PASSWORD`, for CI, is read before the keychain.
 - **No secrets or PII in the repo.** Owner name/address is redacted by default;
-  tests and fixtures use synthetic data; the pre-commit hook runs `gitleaks`.
+  tests and fixtures use synthetic data; CI runs `gitleaks`.
 - **Dependency advisories** (`cargo audit` / `cargo deny`).
 - **Payments stay on the official gateway.** This tool never captures card data;
   it hands off to the district's PCI-compliant Pay Now page.
