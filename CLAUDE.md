@@ -78,7 +78,7 @@ cargo fmt --all
 
 - **No secrets, no PII in the repo.** Not in code, tests, fixtures, or commits.
   Tests use synthetic account data (`1234567-8`). CI runs gitleaks on
-  every push and pull request. The one real account number that appears
+  pull requests and pushes to main. The one real account number that appears
   is only ever typed at runtime by the user — never bake it in.
 - **Mirror the provider — don't impose privacy it doesn't.** The CLI shows
   whatever the portal makes available for an account, owner name/address included.
