@@ -5,7 +5,7 @@ edition = "2021"
 # pk-cli-auth needs 1.89.
 rust-version = "1.89"
 description = "View account, billing, charges, and payment history for Loxahatchee River District utilities from the command line — agent-friendly, JSON-capable."
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 repository = "https://github.com/piekstra/loxahatchee-river-fl-cli"
 readme = "README.md"
 keywords = ["loxahatchee", "utility", "billing", "cli", "wipp"]

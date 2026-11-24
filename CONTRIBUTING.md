@@ -37,7 +37,7 @@ and a missing field shouldn't crash a lookup.
 
 ## License of contributions
 
-By contributing, you agree your work is dual-licensed under **MIT OR Apache-2.0**.
+By contributing, you agree your work is licensed under **AGPL-3.0-only**.
 
 ## The CLI family & cli-common
 
